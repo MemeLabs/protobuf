@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"sync/atomic"
 
-	rpcv1 "github.com/MemeLabs/protobuf/pkg/apis/rpc/v1"
+	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -72,7 +72,7 @@ func (c *CallBase) Cancel() {
 }
 
 // NewCallIn ...
-func NewCallIn(ctx context.Context, req *rpcv1.Call, parentCallAcessor ParentCallAccessor, send SendFunc) *CallIn {
+func NewCallIn(ctx context.Context, req *pb.Call, parentCallAcessor ParentCallAccessor, send SendFunc) *CallIn {
 	return &CallIn{
 		CallBase:           NewCallBase(ctx),
 		req:                req,
@@ -85,7 +85,7 @@ func NewCallIn(ctx context.Context, req *rpcv1.Call, parentCallAcessor ParentCal
 type CallIn struct {
 	CallBase
 	ParentCallAccessor
-	req          *rpcv1.Call
+	req          *pb.Call
 	responseType ResponseType
 	send         SendFunc
 }
@@ -128,12 +128,12 @@ func (c *CallIn) sendResponse(res proto.Message) error {
 
 func (c *CallIn) returnUndefined() {
 	c.responseType = ResponseTypeUndefined
-	c.sendResponse(&rpcv1.Undefined{})
+	c.sendResponse(&pb.Undefined{})
 }
 
 func (c *CallIn) returnError(err error) {
 	c.responseType = ResponseTypeError
-	c.sendResponse(&rpcv1.Error{Message: err.Error()})
+	c.sendResponse(&pb.Error{Message: err.Error()})
 }
 
 func (c *CallIn) returnValue(v proto.Message) {
@@ -163,7 +163,7 @@ func (c *CallIn) returnStream(v interface{}) {
 		}
 
 		if !ok {
-			c.sendResponse(&rpcv1.Close{})
+			c.sendResponse(&pb.Close{})
 			return
 		}
 

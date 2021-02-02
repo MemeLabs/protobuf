@@ -1,10 +1,10 @@
-import Reader from "../../../../pb/reader";
-import Writer from "../../../../pb/writer";
+import Reader from "../../../pb/reader";
+import Writer from "../../../pb/writer";
 
 import {
   Any as google_protobuf_Any,
   IAny as google_protobuf_IAny,
-} from "../../../google/protobuf/any";
+} from "../../google/protobuf/any";
 
 export interface ICall {
   id?: bigint;

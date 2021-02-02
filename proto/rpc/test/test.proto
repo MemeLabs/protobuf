@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package strims.rpc.v1.test;
+package strims.rpc.test;
 
-option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc/v1/test;test";
-option java_package = "gg.strims.rpc.v1.test";
+option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc/test;test";
+option java_package = "gg.strims.rpc.test";
 option swift_prefix = "SRT";
 
 message RPCCallUnaryRequest {

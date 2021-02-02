@@ -8,8 +8,8 @@ import (
 
 // RegisterRPCTestService ...
 func RegisterRPCTestService(host rpc.ServiceRegistry, service RPCTestService) {
-	host.RegisterMethod("strims.rpc.v1.test.RPCTest.CallUnary", service.CallUnary)
-	host.RegisterMethod("strims.rpc.v1.test.RPCTest.CallStream", service.CallStream)
+	host.RegisterMethod("strims.rpc.test.RPCTest.CallUnary", service.CallUnary)
+	host.RegisterMethod("strims.rpc.test.RPCTest.CallStream", service.CallStream)
 }
 
 // RPCTestService ...
@@ -40,7 +40,7 @@ func (c *RPCTestClient) CallUnary(
 	req *RPCCallUnaryRequest,
 	res *RPCCallUnaryResponse,
 ) error {
-	return c.client.CallUnary(ctx, "strims.rpc.v1.test.RPCTest.CallUnary", req, res)
+	return c.client.CallUnary(ctx, "strims.rpc.test.RPCTest.CallUnary", req, res)
 }
 
 // CallStream ...
@@ -49,5 +49,5 @@ func (c *RPCTestClient) CallStream(
 	req *RPCCallStreamRequest,
 	res chan *RPCCallStreamResponse,
 ) error {
-	return c.client.CallStreaming(ctx, "strims.rpc.v1.test.RPCTest.CallStream", req, res)
+	return c.client.CallStreaming(ctx, "strims.rpc.test.RPCTest.CallStream", req, res)
 }

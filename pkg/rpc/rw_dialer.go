@@ -7,7 +7,7 @@ import (
 	"io"
 	"sync"
 
-	rpcv1 "github.com/MemeLabs/protobuf/pkg/apis/rpc/v1"
+	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"github.com/MemeLabs/protobuf/pkg/bytereader"
 	"github.com/golang/protobuf/proto"
 	"go.uber.org/zap"
@@ -73,7 +73,7 @@ func (t *RWTransport) Listen() error {
 			return err
 		}
 
-		req := &rpcv1.Call{}
+		req := &pb.Call{}
 		if err := proto.Unmarshal(b, req); err != nil {
 			continue
 		}
@@ -97,7 +97,7 @@ func (t *RWTransport) Listen() error {
 	}
 }
 
-func (t *RWTransport) send(ctx context.Context, call *rpcv1.Call) error {
+func (t *RWTransport) send(ctx context.Context, call *pb.Call) error {
 	b := callBuffers.Get().(*proto.Buffer)
 	defer callBuffers.Put(b)
 	b.Reset()

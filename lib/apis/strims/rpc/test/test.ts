@@ -1,5 +1,5 @@
-import Reader from "../../../../../pb/reader";
-import Writer from "../../../../../pb/writer";
+import Reader from "../../../../pb/reader";
+import Writer from "../../../../pb/writer";
 
 
 export interface IRPCCallUnaryRequest {

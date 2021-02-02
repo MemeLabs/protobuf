@@ -5,13 +5,14 @@ import (
 	"strings"
 
 	"github.com/MemeLabs/protobuf/pkg/pgsutil"
+	"github.com/MemeLabs/protobuf/pkg/ts"
 	pgs "github.com/lyft/protoc-gen-star"
 )
 
 // TSRPCModule ...
 type TSRPCModule struct {
 	*pgs.ModuleBase
-	c pgs.BuildContext
+	c ts.Context
 }
 
 // TSRPC ...
@@ -20,7 +21,7 @@ func TSRPC() *TSRPCModule { return &TSRPCModule{ModuleBase: &pgs.ModuleBase{}} }
 // InitContext ...
 func (p *TSRPCModule) InitContext(c pgs.BuildContext) {
 	p.ModuleBase.InitContext(c)
-	p.c = c
+	p.c = ts.Context{BuildContext: c}
 }
 
 // Name satisfies the generator.Plugin interface.
@@ -43,7 +44,9 @@ func (p *TSRPCModule) generate(f pgs.File) {
 	path := strings.ReplaceAll(strings.TrimPrefix(f.FullyQualifiedName(), "."), ".", "/")
 	name := fmt.Sprintf("%s/%s_rpc.ts", path, f.File().InputPath().BaseName())
 
-	g := &generator{}
+	g := &generator{
+		runtimePath: p.c.RuntimePath(),
+	}
 	g.generateFile(f)
 
 	p.AddGeneratorFile(name, g.String())
@@ -51,6 +54,7 @@ func (p *TSRPCModule) generate(f pgs.File) {
 
 type generator struct {
 	pgsutil.Generator
+	runtimePath string
 }
 
 func (g *generator) generateFile(f pgs.File) {
@@ -67,16 +71,19 @@ func (g *generator) fullName(e pgs.Entity) string {
 }
 
 func (g *generator) generateImports(f pgs.File) {
-	root := strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), "."))
+	root := g.runtimePath + "/"
+	if g.runtimePath == "self" {
+		root = strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), ".")+1)
+	}
 
-	g.Linef(`import { RPCHost } from "%s../lib/rpc/host";`, root)
-	g.Linef(`import { registerType } from "%s../lib/rpc/registry";`, root)
+	g.Linef(`import { RPCHost } from "%srpc/host";`, root)
+	g.Linef(`import { registerType } from "%srpc/registry";`, root)
 
 EachService:
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
 			if m.ServerStreaming() {
-				g.Linef(`import { Readable as GenericReadable } from "%s../lib/rpc/stream";`, root)
+				g.Linef(`import { Readable as GenericReadable } from "%srpc/stream";`, root)
 				break EachService
 			}
 		}

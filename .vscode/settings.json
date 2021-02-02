@@ -1,0 +1,67 @@
+{
+  // eslint extension options
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact",
+  ],
+  // prettier extension setting
+  "[javascript]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": true
+    }
+  },
+  "[javascriptreact]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": true
+    }
+  },
+  "[typescript]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": true
+    }
+  },
+  "[typescriptreact]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.eslint": true
+    }
+  },
+  "prettier.configPath": ".prettierrc.json",
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": true
+    },
+    "files.eol": "\n"
+  },
+  "go.useLanguageServer": true,
+  "go.vetOnSave": "package",
+  "gopls": {
+    "usePlaceholders": true,
+    "staticcheck": false,
+  },
+  "protoc": {
+    "path": "/usr/local/bin/protoc",
+    "compile_on_save": true,
+    "options": [
+      "--proto_path=${workspaceRoot}/proto",
+      "--go_out=pkg/apis",
+      "--go_opt=module=github.com/MemeLabs/protobuf/pkg/apis",
+      "--gorpc_out=pkg/apis",
+      "--gorpc_opt=module=github.com/MemeLabs/protobuf/pkg/apis",
+      "--ts_out=lib/apis",
+      "--ts_opt=runtime=self",
+      "--tsrpc_out=lib/apis",
+      "--tsrpc_opt=runtime=self",
+    ]
+  }
+}

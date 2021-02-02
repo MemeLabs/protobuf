@@ -1,16 +1,16 @@
 import { PassThrough, Readable, Writable } from "stream";
 
 import { Any } from "../apis/google/protobuf/any";
-import { Call, Cancel, Close, Error, Undefined } from "../apis/strims/rpc/v1/rpc";
+import { Call, Cancel, Close, Error, Undefined } from "../apis/strims/rpc/rpc";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import { anyValueType, registerType, typeName } from "./registry";
 import { Readable as GenericReadable } from "./stream";
 
-registerType("strims.rpc.v1.Cancel", Cancel);
-registerType("strims.rpc.v1.Close", Close);
-registerType("strims.rpc.v1.Error", Error);
-registerType("strims.rpc.v1.Undefined", Undefined);
+registerType("strims.rpc.Cancel", Cancel);
+registerType("strims.rpc.Close", Close);
+registerType("strims.rpc.Error", Error);
+registerType("strims.rpc.Undefined", Undefined);
 
 const CALL_TIMEOUT_MS = 5000;
 
@@ -29,14 +29,14 @@ export class RPCHost {
     this.w = w;
     this.service = service;
     this.callId = BigInt(0);
-    this.callbacks = new Map();
+    this.callbacks = new Map<bigint, CallbackHandler>();
     this.argWriter = new Writer();
     this.callWriter = new Writer();
 
     this.createHandler(r);
   }
 
-  public call(method: string, v: any, parentId: bigint = BigInt(0)): Call {
+  public call(method: string, v: any, parentId = BigInt(0)): Call {
     const ctor = v.constructor;
     const call = new Call({
       id: ++this.callId,

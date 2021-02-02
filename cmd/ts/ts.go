@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MemeLabs/protobuf/pkg/pgsutil"
+	"github.com/MemeLabs/protobuf/pkg/ts"
 	"github.com/golang/protobuf/protoc-gen-go/descriptor"
 	pgs "github.com/lyft/protoc-gen-star"
 )
@@ -13,7 +14,7 @@ import (
 // TSModule ...
 type TSModule struct {
 	*pgs.ModuleBase
-	c pgs.BuildContext
+	c ts.Context
 }
 
 // TS ...
@@ -22,7 +23,7 @@ func TS() *TSModule { return &TSModule{ModuleBase: &pgs.ModuleBase{}} }
 // InitContext ...
 func (p *TSModule) InitContext(c pgs.BuildContext) {
 	p.ModuleBase.InitContext(c)
-	p.c = c
+	p.c = ts.Context{BuildContext: c}
 }
 
 // Name satisfies the generator.Plugin interface.
@@ -43,7 +44,9 @@ func (p *TSModule) generate(f pgs.File) {
 	path := strings.ReplaceAll(strings.TrimPrefix(f.FullyQualifiedName(), "."), ".", "/")
 	name := fmt.Sprintf("%s/%s.ts", path, f.File().InputPath().BaseName())
 
-	g := &generator{}
+	g := &generator{
+		runtimePath: p.c.RuntimePath(),
+	}
 	g.generateFile(f)
 
 	p.AddGeneratorFile(name, g.String())
@@ -51,6 +54,7 @@ func (p *TSModule) generate(f pgs.File) {
 
 type generator struct {
 	pgsutil.Generator
+	runtimePath string
 }
 
 func (g *generator) generateFile(f pgs.File) {
@@ -65,10 +69,13 @@ func (g *generator) generateFile(f pgs.File) {
 }
 
 func (g *generator) generateImports(f pgs.File) {
-	root := strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), "."))
+	root := g.runtimePath + "/"
+	if g.runtimePath == "self" {
+		root = strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), ".")+1)
+	}
 
-	g.Linef(`import Reader from "%s../lib/pb/reader";`, root)
-	g.Linef(`import Writer from "%s../lib/pb/writer";`, root)
+	g.Linef(`import Reader from "%spb/reader";`, root)
+	g.Linef(`import Writer from "%spb/writer";`, root)
 	g.LineBreak()
 
 	imports := map[string]map[string]pgs.Entity{}

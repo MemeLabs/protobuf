@@ -8,12 +8,12 @@
     "module": "ESNext",
     "moduleResolution": "node",
     "outDir": "lib",
-    "rootDir": "src",
     "sourceMap": true,
     "target": "es6",
   },
   "include": [
-    "src/**/*.ts",
+    ".eslintrc.js",
+    "lib/**/*.ts",
   ],
-  "exclude": ["lib", "node_modules"]
+  "exclude": ["node_modules"]
 }

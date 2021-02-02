@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package strims.rpc.v1;
+package strims.rpc;
 
-option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc/v1;rpc";
-option java_package = "gg.strims.rpc.v1";
+option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc;rpc";
+option java_package = "gg.strims.rpc";
 option swift_prefix = "SRC";
 
 import "google/protobuf/any.proto";
