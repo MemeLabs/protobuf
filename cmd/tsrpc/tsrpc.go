@@ -71,7 +71,7 @@ func (g *generator) fullName(e pgs.Entity) string {
 }
 
 func (g *generator) generateImports(f pgs.File) {
-	root := g.runtimePath + "/"
+	root := g.runtimePath + "/lib/"
 	if g.runtimePath == "self" {
 		root = strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), ".")+1)
 	}

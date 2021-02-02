@@ -2,6 +2,11 @@
   "name": "@memelabs/protobuf",
   "version": "0.1.0",
   "description": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MemeLabs/protobuf"
+  },
   "scripts": {
     "build": "webpack --mode production"
   },
@@ -9,14 +14,12 @@
     "@typescript-eslint/eslint-plugin": "^4.13.0",
     "@typescript-eslint/eslint-plugin-tslint": "^4.13.0",
     "@typescript-eslint/parser": "^4.13.0",
-    "buffer": "^6.0.3",
     "clean-webpack-plugin": "^3.0.0",
     "eslint": "^7.17.0",
     "eslint-config-prettier": "^7.1.0",
     "eslint-plugin-import": "^2.22.1",
     "eslint-plugin-jsdoc": "^31.0.3",
     "eslint-plugin-prefer-arrow": "^1.2.2",
-    "js-base64": "^3.6.0",
     "prettier": "^2.2.1",
     "prettier-plugin-import-sort": "0.0.6",
     "stream-browserify": "^3.0.0",
