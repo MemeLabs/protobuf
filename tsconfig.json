@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "jsx": "react",
+    "lib": ["dom", "es6", "es2020"],
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "outDir": "lib",
+    "rootDir": "src",
+    "sourceMap": true,
+    "target": "es6",
+  },
+  "include": [
+    "src/**/*.ts",
+  ],
+  "exclude": ["lib", "node_modules"]
+}
