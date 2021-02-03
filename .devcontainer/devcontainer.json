@@ -14,7 +14,6 @@
 	"extensions": [
 		"codezombiech.gitignore",
 		"esbenp.prettier-vscode",
-		"gencer.html-slim-scss-css-class-completion",
 		"golang.go",
 		"ms-azuretools.vscode-docker",
 		"redhat.vscode-yaml",

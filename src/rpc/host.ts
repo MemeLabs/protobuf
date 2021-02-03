@@ -48,7 +48,6 @@ export class RPCHost {
       }),
     });
 
-    const w = new Writer(16 * 1024);
     this.w.write(Call.encode(call, this.callWriter.reset().fork()).ldelim().finish());
 
     return call;
