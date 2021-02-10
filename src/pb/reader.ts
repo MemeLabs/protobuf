@@ -91,7 +91,7 @@ export default class Reader {
     return this.uint32();
   }
 
-  fixed64(): BigInt {
+  fixed64(): bigint {
     return (
       BigInt(this.buf[this.pos]) |
       (BigInt(this.buf[this.pos++]) << BigInt(8)) |
@@ -104,7 +104,7 @@ export default class Reader {
     );
   }
 
-  sfixed64(): BigInt {
+  sfixed64(): bigint {
     return this.fixed64();
   }
 
