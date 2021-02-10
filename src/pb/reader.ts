@@ -92,15 +92,16 @@ export default class Reader {
   }
 
   fixed64(): bigint {
+    this.pos += 8
     return (
-      BigInt(this.buf[this.pos]) |
-      (BigInt(this.buf[this.pos++]) << BigInt(8)) |
-      (BigInt(this.buf[this.pos++]) << BigInt(16)) |
-      (BigInt(this.buf[this.pos++]) << BigInt(24)) |
-      (BigInt(this.buf[this.pos++]) << BigInt(32)) |
-      (BigInt(this.buf[this.pos++]) << BigInt(40)) |
-      (BigInt(this.buf[this.pos++]) << BigInt(48)) |
-      (BigInt(this.buf[this.pos++]) << BigInt(56))
+      BigInt(this.buf[this.pos-8]) |
+      (BigInt(this.buf[this.pos-7]) << BigInt(8)) |
+      (BigInt(this.buf[this.pos-6]) << BigInt(16)) |
+      (BigInt(this.buf[this.pos-5]) << BigInt(24)) |
+      (BigInt(this.buf[this.pos-4]) << BigInt(32)) |
+      (BigInt(this.buf[this.pos-3]) << BigInt(40)) |
+      (BigInt(this.buf[this.pos-2]) << BigInt(48)) |
+      (BigInt(this.buf[this.pos-1]) << BigInt(56))
     );
   }
 
@@ -127,11 +128,12 @@ export default class Reader {
   }
 
   fixed32(): number {
+    this.pos += 4
     return (
-      this.buf[this.pos] |
-      (this.buf[this.pos++] << 8) |
-      (this.buf[this.pos++] << 16) |
-      (this.buf[this.pos++] << 24)
+      this.buf[this.pos-4] |
+      (this.buf[this.pos-3] << 8) |
+      (this.buf[this.pos-2] << 16) |
+      (this.buf[this.pos-1] << 24)
     );
   }
 
