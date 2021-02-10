@@ -1,4 +1,4 @@
-package gg.memelabs.protobuf.bridge
+package org.memelabs.protobuf.bridge
 
 interface AndroidBridge {
     var onData: (b: ByteArray?) -> Unit

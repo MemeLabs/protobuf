@@ -1,8 +1,8 @@
-package gg.memelabs.protobuf.rpc
+package org.memelabs.protobuf.rpc
 
 import android.util.Log
 import com.squareup.wire.*
-import gg.memelabs.protobuf.bridge.AndroidBridge
+import org.memelabs.protobuf.bridge.AndroidBridge
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import okio.buffer

@@ -58,7 +58,7 @@ func (p *KtRPCModule) generate(f pgs.File) {
 // replace package name with file and path to import RPCClient
 const rpcTpl = `package {{ package . }}
 
-import gg.memelabs.protobuf.rpc.*
+import org.memelabs.protobuf.rpc.*
 
 {{range .Services}}
 class {{.Name}}Client(filepath: String) : RPCClient(filepath) {
