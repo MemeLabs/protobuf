@@ -488,7 +488,13 @@ func (g *generator) entityName(f pgs.FieldType, m pgs.Message) (tsType, tsIfType
 	case f.IsEmbed():
 		e = f.Embed()
 	case f.IsRepeated():
-		e = f.Element().Embed()
+		switch {
+		case f.Element().IsEmbed():
+			e = f.Element().Embed()
+		case f.Element().IsEnum():
+			e = f.Element().Enum()
+			ifPrefix = ""
+		}
 	case f.IsMap():
 		el := f.Element()
 		if i, ok := g.scalarFieldInfo(el.ProtoType()); ok {
