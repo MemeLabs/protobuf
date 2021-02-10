@@ -14,6 +14,13 @@ wire {
     }
 }
 
+task deleteCodeGen(type: Exec) {
+    workingDir "../"
+    commandLine "hack/delete.bash"
+}
+
+generateProtos.finalizedBy deleteCodeGen
+
 android {
     compileSdkVersion 30
     buildToolsVersion "30.0.3"
