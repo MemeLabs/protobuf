@@ -6,7 +6,7 @@ import {
   IAny as google_protobuf_IAny,
 } from "../../google/protobuf/any";
 
-export interface ICall {
+export type ICall = {
   id?: bigint;
   parentId?: bigint;
   method?: string;
@@ -15,18 +15,18 @@ export interface ICall {
 }
 
 export class Call {
-  id: bigint = BigInt(0);
-  parentId: bigint = BigInt(0);
-  method: string = "";
+  id: bigint;
+  parentId: bigint;
+  method: string;
   argument: google_protobuf_Any | undefined;
-  headers: Map<string, Uint8Array> = new Map();
+  headers: Map<string, Uint8Array>;
 
   constructor(v?: ICall) {
     this.id = v?.id || BigInt(0);
     this.parentId = v?.parentId || BigInt(0);
     this.method = v?.method || "";
     this.argument = v?.argument && new google_protobuf_Any(v.argument);
-    if (v?.headers) this.headers = v.headers instanceof Map ? v.headers : new Map(Object.entries(v.headers));
+    this.headers = v.headers instanceof Map ? v.headers : new Map(Object.entries(v.headers));
   }
 
   static encode(m: Call, w?: Writer): Writer {
@@ -87,12 +87,12 @@ export class Call {
   }
 }
 
-export interface IError {
+export type IError = {
   message?: string;
 }
 
 export class Error {
-  message: string = "";
+  message: string;
 
   constructor(v?: IError) {
     this.message = v?.message || "";
@@ -123,13 +123,13 @@ export class Error {
   }
 }
 
-export interface ICancel {
+export type ICancel = {
 }
 
 export class Cancel {
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
   constructor(v?: ICancel) {
-    // noop
   }
 
   static encode(m: Cancel, w?: Writer): Writer {
@@ -143,13 +143,13 @@ export class Cancel {
   }
 }
 
-export interface IUndefined {
+export type IUndefined = {
 }
 
 export class Undefined {
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
   constructor(v?: IUndefined) {
-    // noop
   }
 
   static encode(m: Undefined, w?: Writer): Writer {
@@ -163,13 +163,13 @@ export class Undefined {
   }
 }
 
-export interface IClose {
+export type IClose = {
 }
 
 export class Close {
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
   constructor(v?: IClose) {
-    // noop
   }
 
   static encode(m: Close, w?: Writer): Writer {

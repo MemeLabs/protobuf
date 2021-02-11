@@ -2,7 +2,7 @@ import { readFloat32, readFloat64 } from "./float";
 
 export default class Reader {
   buf: Uint8Array;
-  pos: number = 0;
+  pos = 0;
 
   constructor(buf: Uint8Array) {
     this.buf = buf;
@@ -12,14 +12,14 @@ export default class Reader {
     return this.buf.byteLength;
   }
 
-  skip(n: number) {
+  skip(n: number): void {
     if (this.pos + n > this.len) {
       throw new Error("index out of range");
     }
     this.pos += n;
   }
 
-  skipType(wireType: number) {
+  skipType(wireType: number): void {
     switch (wireType) {
       case 0:
         do {
@@ -92,16 +92,16 @@ export default class Reader {
   }
 
   fixed64(): bigint {
-    this.pos += 8
+    this.pos += 8;
     return (
-      BigInt(this.buf[this.pos-8]) |
-      (BigInt(this.buf[this.pos-7]) << BigInt(8)) |
-      (BigInt(this.buf[this.pos-6]) << BigInt(16)) |
-      (BigInt(this.buf[this.pos-5]) << BigInt(24)) |
-      (BigInt(this.buf[this.pos-4]) << BigInt(32)) |
-      (BigInt(this.buf[this.pos-3]) << BigInt(40)) |
-      (BigInt(this.buf[this.pos-2]) << BigInt(48)) |
-      (BigInt(this.buf[this.pos-1]) << BigInt(56))
+      BigInt(this.buf[this.pos - 8]) |
+      (BigInt(this.buf[this.pos - 7]) << BigInt(8)) |
+      (BigInt(this.buf[this.pos - 6]) << BigInt(16)) |
+      (BigInt(this.buf[this.pos - 5]) << BigInt(24)) |
+      (BigInt(this.buf[this.pos - 4]) << BigInt(32)) |
+      (BigInt(this.buf[this.pos - 3]) << BigInt(40)) |
+      (BigInt(this.buf[this.pos - 2]) << BigInt(48)) |
+      (BigInt(this.buf[this.pos - 1]) << BigInt(56))
     );
   }
 
@@ -128,12 +128,12 @@ export default class Reader {
   }
 
   fixed32(): number {
-    this.pos += 4
+    this.pos += 4;
     return (
-      this.buf[this.pos-4] |
-      (this.buf[this.pos-3] << 8) |
-      (this.buf[this.pos-2] << 16) |
-      (this.buf[this.pos-1] << 24)
+      this.buf[this.pos - 4] |
+      (this.buf[this.pos - 3] << 8) |
+      (this.buf[this.pos - 2] << 16) |
+      (this.buf[this.pos - 1] << 24)
     );
   }
 

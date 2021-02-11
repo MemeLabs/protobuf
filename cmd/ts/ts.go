@@ -167,7 +167,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 	className := m.Name().UpperCamelCase()
 
 	// constructor argument interface
-	g.Linef(`export interface I%s {`, className)
+	g.Linef(`export type I%s = {`, className)
 	for _, f := range m.NonOneOfFields() {
 		undef := ""
 		if f.Type().IsEmbed() {
@@ -189,7 +189,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 		if f.Type().IsEmbed() {
 			g.Linef(`%s: %s | undefined;`, g.fieldName(f), fi.tsType)
 		} else {
-			g.Linef(`%s: %s = %s;`, g.fieldName(f), fi.tsType, fi.zeroValue)
+			g.Linef(`%s: %s;`, g.fieldName(f), fi.tsType)
 		}
 	}
 	for _, o := range m.OneOfs() {
@@ -198,21 +198,24 @@ func (g *generator) generateMessage(m pgs.Message) {
 	g.LineBreak()
 
 	// constructor
+	if len(m.Fields()) == 0 {
+		g.Line(`// eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function`)
+	}
 	g.Linef(`constructor(v?: I%s) {`, className)
 	for _, f := range m.NonOneOfFields() {
 		name := g.fieldName(f)
 		fi := g.fieldInfo(f)
 		if f.Type().IsRepeated() {
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`if (v?.%s) this.%s = v.%s.map(v => new %s(v));`, name, name, name, g.fieldInfo(f).tsBaseType)
+				g.Linef(`this.%s = v?.%s ? v.%s.map(v => new %s(v)) : [];`, name, name, name, g.fieldInfo(f).tsBaseType)
 			} else {
-				g.Linef(`if (v?.%s) this.%s = v.%s;`, name, name, name)
+				g.Linef(`this.%s = v?.%s ? v.%s : [];`, name, name, name)
 			}
 		} else if f.Type().IsMap() {
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`if (v?.%s) this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s.entries()) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, name, g.fieldInfo(f).tsBaseType)
+				g.Linef(`this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s.entries()) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, g.fieldInfo(f).tsBaseType)
 			} else {
-				g.Linef(`if (v?.%s) this.%s = v.%s instanceof Map ? v.%s : new Map(Object.entries(v.%s));`, name, name, name, name, name)
+				g.Linef(`this.%s = v.%s instanceof Map ? v.%s : new Map(Object.entries(v.%s));`, name, name, name, name)
 			}
 		} else if f.Type().IsEmbed() {
 			g.Linef(`this.%s = v?.%s && new %s(v.%s);`, name, name, fi.tsType, name)
@@ -223,9 +226,6 @@ func (g *generator) generateMessage(m pgs.Message) {
 	for _, o := range m.OneOfs() {
 		name := o.Name().LowerCamelCase()
 		g.Linef(`this.%s = new %s(v?.%s);`, name, g.oneOfName(o), name)
-	}
-	if len(m.Fields()) == 0 {
-		g.Line(`// noop`)
 	}
 	g.Line(`}`)
 	g.LineBreak()
@@ -589,8 +589,8 @@ func (g *generator) fieldInfo(f pgs.Field) (t fieldInfo) {
 	if f.Type().IsMap() {
 		kt, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
 		t.tsType = fmt.Sprintf(`Map<%s, %s>`, kt.tsType, t.tsType)
+		t.zeroValue = fmt.Sprintf("new %s()", t.tsType)
 		t.tsIfType = fmt.Sprintf(`Map<%s, %s> | { [key: %s]: %s }`, kt.tsType, t.tsIfType, kt.tsType, t.tsIfType)
-		t.zeroValue = "new Map()"
 	} else if f.Type().IsRepeated() {
 		t.tsType = t.tsType + "[]"
 		t.tsIfType = t.tsIfType + "[]"
