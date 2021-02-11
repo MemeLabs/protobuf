@@ -22,7 +22,8 @@ func (p *KtRPCModule) InitContext(c pgs.BuildContext) {
 	p.ModuleBase.InitContext(c)
 
 	tpl := template.New("ktrpc").Funcs(map[string]interface{}{
-		"package": p.PackageName,
+		"package":  p.PackageName,
+		"fullName": p.fullName,
 	})
 
 	p.tpl = template.Must(tpl.Parse(rpcTpl))
@@ -31,7 +32,10 @@ func (p *KtRPCModule) InitContext(c pgs.BuildContext) {
 // Name satisfies the generator.Plugin interface.
 func (p *KtRPCModule) Name() string { return "ktrpc" }
 
-func (p *KtRPCModule) PackageName(f pgs.File) string { return *f.Descriptor().Options.JavaPackage }
+// PackageName ...
+func (p *KtRPCModule) PackageName(f pgs.File) string {
+	return *f.Descriptor().Options.JavaPackage
+}
 
 // Execute ...
 func (p *KtRPCModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.Package) []pgs.Artifact {
@@ -55,18 +59,22 @@ func (p *KtRPCModule) generate(f pgs.File) {
 	p.AddGeneratorTemplateFile(name, p.tpl, f)
 }
 
+func (p *KtRPCModule) fullName(e pgs.Entity) string {
+	return strings.TrimPrefix(e.FullyQualifiedName(), ".")
+}
+
 // replace package name with file and path to import RPCClient
 const rpcTpl = `package {{ package . }}
 
-import org.memelabs.protobuf.rpc.*
+import memelabs.protobuf.rpc.*
 
 {{range .Services}}
-class {{.Name}}Client(filepath: String) : RPCClient(filepath) {
+class {{.Name}}Client(s: ByteStream) : RPCClient(s) {
 {{range .Methods}}
     suspend fun {{.Name.UpperCamelCase}}(
         arg: {{.Input.Name}} = {{.Input.Name}}()
     ): {{if .ServerStreaming}}RPCResponseStream<{{.Output.Name}}>{{else}}{{.Output.Name}}{{end}} =
-        this.{{if .ServerStreaming}}callStreaming{{else}}callUnary{{end}}("{{$.Name}}/{{.Name}}", arg)
+        this.{{if .ServerStreaming}}callStreaming{{else}}callUnary{{end}}("{{. | fullName}}", arg)
 {{end}}}
 {{end}}
 `

@@ -1,7 +1,26 @@
 plugins {
     id 'com.android.library'
     id 'kotlin-android'
+    id 'com.google.protobuf'
     id 'com.squareup.wire'
+}
+
+protobuf {
+    protoc {
+        artifact = 'com.google.protobuf:protoc:3.14.0'
+    }
+
+    plugins {
+        ktrpc {
+            path = '/usr/local/bin/protoc-gen-ktrpc'
+        }
+    }
+
+    generateProtoTasks {
+        all()*.plugins {
+            ktrpc {}
+        }
+    }
 }
 
 wire {
@@ -10,16 +29,18 @@ wire {
     }
 
     kotlin {
+        includes = ['memelabs.protobuf.apis.*']
         out = 'src/main/java'
     }
 }
 
-task deleteCodeGen(type: Exec) {
-    workingDir "../"
-    commandLine "hack/delete.bash"
+task deleteWireRpc(type: Delete) {
+    delete fileTree('src/main/java/memelabs/protobuf/apis') {
+        include '**/Grpc*', '**/*Client.kt'
+    }
 }
 
-generateProtos.finalizedBy deleteCodeGen
+generateProtos.finalizedBy deleteWireRpc
 
 android {
     compileSdkVersion 30
@@ -47,6 +68,14 @@ android {
     kotlinOptions {
         jvmTarget = '1.8'
     }
+
+    sourceSets {
+        main {
+            proto {
+                srcDir '../proto'
+            }
+        }
+    }
 }
 
 dependencies {
@@ -63,4 +92,7 @@ dependencies {
     testImplementation 'junit:junit:4.13.1'
     androidTestImplementation 'androidx.test.ext:junit:1.1.2'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.3.0'
+
+    protobuf files('/usr/local/include/')
+    protobuf files('/usr/include/')
 }

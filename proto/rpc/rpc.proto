@@ -3,7 +3,7 @@ syntax = "proto3";
 package strims.rpc;
 
 option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc;rpc";
-option java_package = "org.memelabs.protobuf.rpc";
+option java_package = "memelabs.protobuf.apis.rpc";
 option swift_prefix = "SRC";
 
 import "google/protobuf/any.proto";

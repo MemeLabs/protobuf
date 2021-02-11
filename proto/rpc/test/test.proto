@@ -3,7 +3,7 @@ syntax = "proto3";
 package strims.rpc.test;
 
 option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc/test;test";
-option java_package = "org.memelabs.protobuf.rpc.test";
+option java_package = "memelabs.protobuf.apis.rpc.test";
 option swift_prefix = "SRT";
 
 message RPCCallUnaryRequest {

@@ -26,7 +26,8 @@ export class Call {
     this.parentId = v?.parentId || BigInt(0);
     this.method = v?.method || "";
     this.argument = v?.argument && new google_protobuf_Any(v.argument);
-    this.headers = v.headers instanceof Map ? v.headers : new Map(Object.entries(v.headers));
+    if (v?.headers) this.headers = v.headers instanceof Map ? v.headers : new Map(Object.entries(v.headers));
+    else this.headers = new Map<string, Uint8Array>();
   }
 
   static encode(m: Call, w?: Writer): Writer {

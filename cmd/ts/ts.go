@@ -213,10 +213,11 @@ func (g *generator) generateMessage(m pgs.Message) {
 			}
 		} else if f.Type().IsMap() {
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s.entries()) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, g.fieldInfo(f).tsBaseType)
+				g.Linef(`if (v?.%s) this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s.entries()) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, name, g.fieldInfo(f).tsBaseType)
 			} else {
-				g.Linef(`this.%s = v.%s instanceof Map ? v.%s : new Map(Object.entries(v.%s));`, name, name, name, name)
+				g.Linef(`if (v?.%s) this.%s = v.%s instanceof Map ? v.%s : new Map(Object.entries(v.%s));`, name, name, name, name, name)
 			}
+			g.Linef(`else this.%s = %s;`, name, fi.zeroValue)
 		} else if f.Type().IsEmbed() {
 			g.Linef(`this.%s = v?.%s && new %s(v.%s);`, name, name, fi.tsType, name)
 		} else {
@@ -589,8 +590,8 @@ func (g *generator) fieldInfo(f pgs.Field) (t fieldInfo) {
 	if f.Type().IsMap() {
 		kt, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
 		t.tsType = fmt.Sprintf(`Map<%s, %s>`, kt.tsType, t.tsType)
-		t.zeroValue = fmt.Sprintf("new %s()", t.tsType)
 		t.tsIfType = fmt.Sprintf(`Map<%s, %s> | { [key: %s]: %s }`, kt.tsType, t.tsIfType, kt.tsType, t.tsIfType)
+		t.zeroValue = fmt.Sprintf("new %s()", t.tsType)
 	} else if f.Type().IsRepeated() {
 		t.tsType = t.tsType + "[]"
 		t.tsIfType = t.tsIfType + "[]"
