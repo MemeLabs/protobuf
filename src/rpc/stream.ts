@@ -2,11 +2,11 @@
 
 import * as events from "events";
 
-interface internal extends events.EventEmitter {
+declare class internal extends events.EventEmitter {
   pipe<T extends NodeJS.WritableStream>(destination: T, options?: { end?: boolean }): T;
 }
 
-interface Stream<T> extends internal {
+declare class Stream<T> extends internal {
   constructor(opts?: ReadableOptions<T>);
 }
 
@@ -19,7 +19,7 @@ export interface ReadableOptions<T> {
   autoDestroy?: boolean;
 }
 
-export interface Readable<T> extends Stream<T> {
+export declare class Readable<T> extends Stream<T> {
   readable: boolean;
   readonly readableHighWaterMark: number;
   readonly readableLength: number;

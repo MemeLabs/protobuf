@@ -2,14 +2,14 @@ import Reader from "../../../pb/reader";
 import Writer from "../../../pb/writer";
 
 
-export interface IAny {
+export type IAny = {
   typeUrl?: string;
   value?: Uint8Array;
 }
 
 export class Any {
-  typeUrl: string = "";
-  value: Uint8Array = new Uint8Array();
+  typeUrl: string;
+  value: Uint8Array;
 
   constructor(v?: IAny) {
     this.typeUrl = v?.typeUrl || "";

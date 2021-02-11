@@ -2,12 +2,12 @@ import Reader from "../../../../pb/reader";
 import Writer from "../../../../pb/writer";
 
 
-export interface IRPCCallUnaryRequest {
+export type IRPCCallUnaryRequest = {
   id?: bigint;
 }
 
 export class RPCCallUnaryRequest {
-  id: bigint = BigInt(0);
+  id: bigint;
 
   constructor(v?: IRPCCallUnaryRequest) {
     this.id = v?.id || BigInt(0);
@@ -38,12 +38,12 @@ export class RPCCallUnaryRequest {
   }
 }
 
-export interface IRPCCallUnaryResponse {
+export type IRPCCallUnaryResponse = {
   id?: bigint;
 }
 
 export class RPCCallUnaryResponse {
-  id: bigint = BigInt(0);
+  id: bigint;
 
   constructor(v?: IRPCCallUnaryResponse) {
     this.id = v?.id || BigInt(0);
@@ -74,14 +74,14 @@ export class RPCCallUnaryResponse {
   }
 }
 
-export interface IRPCCallStreamRequest {
+export type IRPCCallStreamRequest = {
   id?: bigint;
   count?: bigint;
 }
 
 export class RPCCallStreamRequest {
-  id: bigint = BigInt(0);
-  count: bigint = BigInt(0);
+  id: bigint;
+  count: bigint;
 
   constructor(v?: IRPCCallStreamRequest) {
     this.id = v?.id || BigInt(0);
@@ -117,12 +117,12 @@ export class RPCCallStreamRequest {
   }
 }
 
-export interface IRPCCallStreamResponse {
+export type IRPCCallStreamResponse = {
   id?: bigint;
 }
 
 export class RPCCallStreamResponse {
-  id: bigint = BigInt(0);
+  id: bigint;
 
   constructor(v?: IRPCCallStreamResponse) {
     this.id = v?.id || BigInt(0);

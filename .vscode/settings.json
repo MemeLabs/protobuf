@@ -58,9 +58,9 @@
       "--go_opt=module=github.com/MemeLabs/protobuf/pkg/apis",
       "--gorpc_out=pkg/apis",
       "--gorpc_opt=module=github.com/MemeLabs/protobuf/pkg/apis",
-      "--ts_out=lib/apis",
+      "--ts_out=src/apis",
       "--ts_opt=runtime=self",
-      "--tsrpc_out=lib/apis",
+      "--tsrpc_out=src/apis",
       "--tsrpc_opt=runtime=self",
     ]
   }

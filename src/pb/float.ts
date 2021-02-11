@@ -18,7 +18,7 @@ if (littlEndian) {
     return f32Scratch[0];
   };
 
-  writeFloat32 = (buf: Uint8Array, pos: number, v: number) => {
+  writeFloat32 = (buf: Uint8Array, pos: number, v: number): void => {
     f32Scratch[0] = v;
     buf[pos] = f32ScratchByes[0];
     buf[pos + 1] = f32ScratchByes[1];
@@ -38,7 +38,7 @@ if (littlEndian) {
     return f64Scratch[0];
   };
 
-  writeFloat64 = (buf: Uint8Array, pos: number, v: number) => {
+  writeFloat64 = (buf: Uint8Array, pos: number, v: number): void => {
     f64Scratch[0] = v;
     buf[pos] = f64ScratchByes[0];
     buf[pos + 1] = f64ScratchByes[1];
@@ -58,7 +58,7 @@ if (littlEndian) {
     return f32Scratch[0];
   };
 
-  writeFloat32 = (buf: Uint8Array, pos: number, v: number) => {
+  writeFloat32 = (buf: Uint8Array, pos: number, v: number): void => {
     f32Scratch[0] = v;
     buf[pos] = f32ScratchByes[3];
     buf[pos + 1] = f32ScratchByes[2];
@@ -78,7 +78,7 @@ if (littlEndian) {
     return f64Scratch[0];
   };
 
-  writeFloat64 = (buf: Uint8Array, pos: number, v: number) => {
+  writeFloat64 = (buf: Uint8Array, pos: number, v: number): void => {
     f64Scratch[0] = v;
     buf[pos] = f64ScratchByes[7];
     buf[pos + 1] = f64ScratchByes[6];

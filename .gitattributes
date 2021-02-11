@@ -1,4 +1,4 @@
-lib/apis/* linguist-generated
+src/apis/* linguist-generated
 pkg/apis/* linguist-generated
 android/src/main/java/org/memelabs/protobuf/rpc/* linguist-generated
 go.sum linguist-generated

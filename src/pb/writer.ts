@@ -5,10 +5,10 @@ const growthFactor = 1.5;
 
 export default class Writer {
   buf: Uint8Array;
-  pos: number = 0;
+  pos = 0;
   offsets: number[];
 
-  constructor(size: number = 1024) {
+  constructor(size = 1024) {
     this.buf = new Uint8Array(size);
     this.offsets = [];
   }

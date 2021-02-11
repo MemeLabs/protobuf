@@ -1,6 +1,6 @@
 {
   "name": "@memelabs/protobuf",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "",
   "license": "MIT",
   "repository": {
@@ -24,6 +24,7 @@
     "eslint-plugin-import": "^2.22.1",
     "eslint-plugin-jsdoc": "^31.0.3",
     "eslint-plugin-prefer-arrow": "^1.2.2",
+    "import-sort-style-module": "^6.0.0",
     "prettier": "^2.2.1",
     "prettier-plugin-import-sort": "0.0.6",
     "stream-browserify": "^3.0.0",

@@ -2,6 +2,7 @@ import { PassThrough, Readable, Writable } from "stream";
 
 import { Any } from "../apis/google/protobuf/any";
 import { Call, Cancel, Close, Error, Undefined } from "../apis/strims/rpc/rpc";
+import { Message } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import { anyValueType, registerType, typeName } from "./registry";
@@ -14,18 +15,25 @@ registerType("strims.rpc.Undefined", Undefined);
 
 const CALL_TIMEOUT_MS = 5000;
 
-type CallbackHandler = (m: any) => void;
+type CallbackHandler = (m: unknown) => void;
+
+export type Service = {
+  [key: string]: <Request, Response>(
+    call: Call,
+    arg: Request
+  ) => Response | Promise<Response> | GenericReadable<Response> | undefined;
+};
 
 // RPCHost transport agnostic remote procedure utility using protobufs.
 export class RPCHost {
   private w: Writable;
-  private service: any;
+  private service: Service;
   private callId: bigint;
   private callbacks: Map<bigint, CallbackHandler>;
   private argWriter: Writer;
   private callWriter: Writer;
 
-  constructor(w: Writable, r: Readable, service: any = {}) {
+  constructor(w: Writable, r: Readable, service: Service = {}) {
     this.w = w;
     this.service = service;
     this.callId = BigInt(0);
@@ -36,15 +44,15 @@ export class RPCHost {
     this.createHandler(r);
   }
 
-  public call(method: string, v: any, parentId = BigInt(0)): Call {
-    const ctor = v.constructor;
+  public call<T>(method: string, arg: T, parentId = BigInt(0)): Call {
+    const ctor = ((arg as unknown) as Message<T>).constructor;
     const call = new Call({
       id: ++this.callId,
       parentId,
       method,
       argument: new Any({
         typeUrl: `strims.gg/${typeName(ctor)}`,
-        value: ctor.encode(v, this.argWriter.reset()).finish(),
+        value: ctor.encode(arg, this.argWriter.reset()).finish(),
       }),
     });
 
@@ -60,14 +68,14 @@ export class RPCHost {
         this.callbacks.delete(call.id);
       }, timeout || CALL_TIMEOUT_MS);
 
-      this.callbacks.set(call.id, (res: any) => {
+      this.callbacks.set(call.id, (res: unknown) => {
         clearTimeout(tid);
         this.callbacks.delete(call.id);
 
         if (res instanceof Error) {
           reject(res);
         } else {
-          resolve(res);
+          resolve(res as T);
         }
       });
     });
@@ -80,7 +88,7 @@ export class RPCHost {
 
     e.on("close", () => this.call("CANCEL", new Cancel(), call.id));
 
-    this.callbacks.set(call.id, (r: any) => {
+    this.callbacks.set(call.id, (r: unknown) => {
       if (r instanceof Error) {
         this.callbacks.delete(call.id);
         e.emit("error", new Error({ message: r.message }));
@@ -92,7 +100,7 @@ export class RPCHost {
       }
     });
 
-    return e as any;
+    return (e as unknown) as GenericReadable<T>;
   }
 
   private createHandler(r: Readable) {
@@ -111,35 +119,32 @@ export class RPCHost {
     });
   }
 
-  private handleCallback(call: Call, arg: any) {
+  private handleCallback(call: Call, arg: unknown) {
     const cb = this.callbacks.get(call.parentId);
-    if (!cb) {
-      // TODO: send err closed
-      return;
+    if (cb) {
+      cb(arg);
     }
-    cb(arg);
   }
 
-  private handleCall(call: Call, arg: any) {
-    let res;
+  private handleCall(call: Call, arg: unknown) {
+    let res: unknown;
     try {
       const h = this.service[call.method];
       if (!h) {
         throw new Error({ message: `method not implemented: ${call.method}` });
       }
       res = h(call, arg);
-    } catch (e) {
-      // TODO: we may not want to expose this to remote hosts...
-      res = new Error({ message: e.message });
+    } catch ({ message }) {
+      res = new Error({ message: String(message) });
     }
 
     if (res instanceof Readable) {
       res.on("data", (d) => this.call("CALLBACK", d, call.id));
       res.on("close", () => this.call("CALLBACK", new Close(), call.id));
     } else if (res instanceof Promise) {
-      res.then((d) => this.call("CALLBACK", d, call.id));
+      void res.then((d) => this.call("CALLBACK", d, call.id));
       res.catch(({ message }) => {
-        const e = new Error({ message });
+        const e = new Error({ message: String(message) });
         this.call("CALLBACK", e, call.id);
       });
     } else if (res === undefined) {
