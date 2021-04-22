@@ -1,4 +1,4 @@
-import { big1, big128, big32, big63, big7, bigmaxu32, bigmaxu8 } from "./big";
+import { big1, big127, big128, big32, big63, big7, bigmaxu32 } from "./big";
 import { writeFloat32, writeFloat64 } from "./float";
 
 const maxVarintLen32 = 5;
@@ -57,12 +57,12 @@ export default class Writer {
   }
 
   int32(v: number): Writer {
-    return this.uint32(v >> 0);
+    return this.uint32(v >>> 0);
   }
 
   int64(v: bigint): Writer {
     if (v < 0) {
-      v |= big1 << big63;
+      v += big1 << BigInt(64);
     }
     return this.uint64(v);
   }
@@ -70,11 +70,11 @@ export default class Writer {
   uint32(v: number): Writer {
     this.grow(4);
     while (v >= 0x80) {
-      this.buf[this.pos] = Number(v & 0xff) | 0x80;
-      v >>= 7;
+      this.buf[this.pos] = Number(v & 0x7f) | 0x80;
+      v >>>= 7;
       this.pos++;
     }
-    this.buf[this.pos] = Number(v & 0xff);
+    this.buf[this.pos] = Number(v & 0x7f);
     this.pos++;
     return this;
   }
@@ -82,25 +82,21 @@ export default class Writer {
   uint64(v: bigint): Writer {
     this.grow(8);
     while (v >= big128) {
-      this.buf[this.pos] = Number(v & bigmaxu8) | 0x80;
+      this.buf[this.pos] = Number(v & big127) | 0x80;
       v >>= big7;
       this.pos++;
     }
-    this.buf[this.pos] = Number(v & bigmaxu8);
+    this.buf[this.pos] = Number(v & big127);
     this.pos++;
     return this;
   }
 
   sint32(v: number): Writer {
-    return this.uint32((v << 1) ^ (v >> 31));
+    return this.uint32(((v << 1) ^ (v >> 31)) >>> 0);
   }
 
   sint64(v: bigint): Writer {
-    v <<= big1;
-    if (v < 0) {
-      v |= big1;
-    }
-    return this.uint64(v);
+    return this.uint64((v << big1) ^ (v >> big63));
   }
 
   bool(v: boolean): Writer {

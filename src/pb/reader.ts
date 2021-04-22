@@ -1,4 +1,4 @@
-import { big0, big1, big14, big21, big28, big32, big63, big7, bigmaxi64 } from "./big";
+import { big0, big1, big32, big63, bigmaxi64 } from "./big";
 import { readFloat32, readFloat64 } from "./float";
 
 export default class Reader {
@@ -45,7 +45,7 @@ export default class Reader {
 
   int64(): bigint {
     const v = this.uint64();
-    return v >> big63 === big0 ? v : -(v & bigmaxi64);
+    return v >> big63 === big0 ? v : -((~v + big1) & bigmaxi64);
   }
 
   uint32(): number {
@@ -58,7 +58,7 @@ export default class Reader {
     v = (v | ((this.buf[this.pos] & 127) << 21)) >>> 0;
     if (this.buf[this.pos++] < 128) return v;
     v = (v | ((this.buf[this.pos] & 15) << 28)) >>> 0;
-    return v;
+    return v >>> 0;
   }
 
   uint64(): bigint {
@@ -70,26 +70,26 @@ export default class Reader {
     if (this.buf[this.pos++] < 128) return BigInt(lo);
     lo = (lo | ((this.buf[this.pos] & 127) << 21)) >>> 0;
     if (this.buf[this.pos++] < 128) return BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 15) << 28)) >>> 0;
-    if (this.buf[this.pos++] < 128) return BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 28)) >>> 0;
 
-    const hi = BigInt(lo);
-    lo = (this.buf[this.pos] & 127) >>> 0;
-    if (this.buf[this.pos++] < 128) return (hi << big7) | BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 7)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (hi << big14) | BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 14)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (hi << big21) | BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 21)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (hi << big28) | BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 15) << 28)) >>> 0;
+    let hi = ((this.buf[this.pos] & 127) >> 4) >>> 0;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
+    hi = (hi | ((this.buf[this.pos] & 127) << 3)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
+    hi = (hi | ((this.buf[this.pos] & 127) << 10)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
+    hi = (hi | ((this.buf[this.pos] & 127) << 17)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
+    hi = (hi | ((this.buf[this.pos] & 127) << 24)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
+    hi = (hi | ((this.buf[this.pos] & 127) << 31)) >>> 0;
     this.pos++;
-    return (hi << big32) | BigInt(lo);
+    return (BigInt(hi) << big32) | BigInt(lo);
   }
 
   sint32(): number {
     const v = this.uint32();
-    return (v >> 1) ^ -(v & 1);
+    return (v >>> 1) ^ -(v & 1);
   }
 
   sint64(): bigint {
