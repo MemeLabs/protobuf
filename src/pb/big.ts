@@ -1,0 +1,12 @@
+export const big0 = BigInt(0);
+export const big1 = BigInt(1);
+export const big7 = BigInt(7);
+export const big14 = BigInt(14);
+export const big21 = BigInt(21);
+export const big28 = BigInt(28);
+export const big32 = BigInt(32);
+export const big63 = BigInt(63);
+export const big128 = BigInt(128);
+export const bigmaxu8 = BigInt(0xff);
+export const bigmaxu32 = BigInt(0xffffffff);
+export const bigmaxi64 = BigInt(0x7fffffffffffffff);

@@ -1,3 +1,4 @@
+import { big0, big1, big14, big21, big28, big32, big63, big7, bigmaxi64 } from "./big";
 import { readFloat32, readFloat64 } from "./float";
 
 export default class Reader {
@@ -44,7 +45,7 @@ export default class Reader {
 
   int64(): bigint {
     const v = this.uint64();
-    return v >> BigInt(63) === BigInt(0) ? v : -(v & BigInt(0x7fffffffffffffff));
+    return v >> big63 === big0 ? v : -(v & bigmaxi64);
   }
 
   uint32(): number {
@@ -61,16 +62,29 @@ export default class Reader {
   }
 
   uint64(): bigint {
-    let b = BigInt(0);
-    let v = BigInt(0);
-    let s = BigInt(0);
-    do {
-      b = BigInt(this.buf[this.pos]);
-      v |= (b & BigInt(0x7f)) << s;
-      s += BigInt(7);
-      this.pos++;
-    } while (this.pos < this.len && b >= BigInt(0x80));
-    return v;
+    let lo = (this.buf[this.pos] & 127) >>> 0;
+    if (this.buf[this.pos++] < 128) return BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 7)) >>> 0;
+    if (this.buf[this.pos++] < 128) return BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 14)) >>> 0;
+    if (this.buf[this.pos++] < 128) return BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 21)) >>> 0;
+    if (this.buf[this.pos++] < 128) return BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 15) << 28)) >>> 0;
+    if (this.buf[this.pos++] < 128) return BigInt(lo);
+
+    const hi = BigInt(lo);
+    lo = (this.buf[this.pos] & 127) >>> 0;
+    if (this.buf[this.pos++] < 128) return (hi << big7) | BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 7)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (hi << big14) | BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 14)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (hi << big21) | BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 127) << 21)) >>> 0;
+    if (this.buf[this.pos++] < 128) return (hi << big28) | BigInt(lo);
+    lo = (lo | ((this.buf[this.pos] & 15) << 28)) >>> 0;
+    this.pos++;
+    return (hi << big32) | BigInt(lo);
   }
 
   sint32(): number {
@@ -80,7 +94,7 @@ export default class Reader {
 
   sint64(): bigint {
     const v = this.uint64();
-    return (v >> BigInt(1)) ^ -(v & BigInt(1));
+    return (v >> big1) ^ -(v & big1);
   }
 
   bool(): boolean {
@@ -92,21 +106,15 @@ export default class Reader {
   }
 
   fixed64(): bigint {
-    this.pos += 8;
-    return (
-      BigInt(this.buf[this.pos - 8]) |
-      (BigInt(this.buf[this.pos - 7]) << BigInt(8)) |
-      (BigInt(this.buf[this.pos - 6]) << BigInt(16)) |
-      (BigInt(this.buf[this.pos - 5]) << BigInt(24)) |
-      (BigInt(this.buf[this.pos - 4]) << BigInt(32)) |
-      (BigInt(this.buf[this.pos - 3]) << BigInt(40)) |
-      (BigInt(this.buf[this.pos - 2]) << BigInt(48)) |
-      (BigInt(this.buf[this.pos - 1]) << BigInt(56))
-    );
+    const lo = BigInt(this.fixed32());
+    const hi = BigInt(this.fixed32());
+    return (hi << big32) | lo;
   }
 
   sfixed64(): bigint {
-    return this.fixed64();
+    const lo = BigInt(this.fixed32());
+    const hi = BigInt(this.sfixed32());
+    return (hi << big32) | lo;
   }
 
   double(): number {
@@ -128,6 +136,10 @@ export default class Reader {
   }
 
   fixed32(): number {
+    return this.sfixed32() >>> 0;
+  }
+
+  sfixed32(): number {
     this.pos += 4;
     return (
       this.buf[this.pos - 4] |
@@ -135,10 +147,6 @@ export default class Reader {
       (this.buf[this.pos - 2] << 16) |
       (this.buf[this.pos - 1] << 24)
     );
-  }
-
-  sfixed32(): number {
-    return this.fixed32();
   }
 
   float(): number {

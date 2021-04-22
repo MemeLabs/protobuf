@@ -1,3 +1,4 @@
+import { big1, big128, big32, big63, big7, bigmaxu32, bigmaxu8 } from "./big";
 import { writeFloat32, writeFloat64 } from "./float";
 
 const maxVarintLen32 = 5;
@@ -61,7 +62,7 @@ export default class Writer {
 
   int64(v: bigint): Writer {
     if (v < 0) {
-      v |= BigInt(1) << BigInt(63);
+      v |= big1 << big63;
     }
     return this.uint64(v);
   }
@@ -80,12 +81,12 @@ export default class Writer {
 
   uint64(v: bigint): Writer {
     this.grow(8);
-    while (v >= BigInt(0x80)) {
-      this.buf[this.pos] = Number(v & BigInt(0xff)) | 0x80;
-      v >>= BigInt(7);
+    while (v >= big128) {
+      this.buf[this.pos] = Number(v & bigmaxu8) | 0x80;
+      v >>= big7;
       this.pos++;
     }
-    this.buf[this.pos] = Number(v & BigInt(0xff));
+    this.buf[this.pos] = Number(v & bigmaxu8);
     this.pos++;
     return this;
   }
@@ -95,9 +96,9 @@ export default class Writer {
   }
 
   sint64(v: bigint): Writer {
-    v <<= BigInt(1);
+    v <<= big1;
     if (v < 0) {
-      v |= BigInt(1);
+      v |= big1;
     }
     return this.uint64(v);
   }
@@ -111,15 +112,8 @@ export default class Writer {
   }
 
   fixed64(v: bigint): Writer {
-    this.grow(8);
-    this.buf[this.pos] = Number(v & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(8)) & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(16)) & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(24)) & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(32)) & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(40)) & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(48)) & BigInt(0xff));
-    this.buf[this.pos++] = Number((v >> BigInt(56)) & BigInt(0xff));
+    this.fixed32(Number(v & bigmaxu32));
+    this.fixed32(Number((v >> big32) & bigmaxu32));
     return this;
   }
 
@@ -148,16 +142,17 @@ export default class Writer {
   }
 
   fixed32(v: number): Writer {
-    this.grow(4);
-    this.buf[this.pos] = v & 0xff;
-    this.buf[this.pos++] = (v >> 8) & 0xff;
-    this.buf[this.pos++] = (v >> 16) & 0xff;
-    this.buf[this.pos++] = (v >> 24) & 0xff;
-    return this;
+    return this.sfixed32(v);
   }
 
   sfixed32(v: number): Writer {
-    return this.fixed32(v);
+    this.grow(4);
+    this.pos += 4;
+    this.buf[this.pos - 4] = v & 0xff;
+    this.buf[this.pos - 3] = (v >> 8) & 0xff;
+    this.buf[this.pos - 2] = (v >> 16) & 0xff;
+    this.buf[this.pos - 1] = (v >> 24) & 0xff;
+    return this;
   }
 
   float(v: number): Writer {
