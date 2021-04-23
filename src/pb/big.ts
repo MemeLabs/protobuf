@@ -1,10 +1,4 @@
-export const big0 = BigInt(0);
 export const big1 = BigInt(1);
-export const big7 = BigInt(7);
 export const big32 = BigInt(32);
 export const big63 = BigInt(63);
-export const big127 = BigInt(127);
-export const big128 = BigInt(128);
-export const bigmaxu32 = BigInt(0xffffffff);
-export const bigmaxu64 = (bigmaxu32 << big32) | bigmaxu32;
-export const bigmaxi64 = bigmaxu64 >> big1;
+export const bigmsb64 = big1 << BigInt(64);

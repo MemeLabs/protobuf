@@ -1,9 +1,13 @@
 import assert from "assert";
 
 import { TestMessage } from "../apis/strims/test/message";
-import { big32, bigmaxi64, bigmaxu32, bigmaxu64 } from "./big";
 import Reader from "./reader";
 import Writer from "./writer";
+
+export const big32 = BigInt(32);
+export const bigmaxu32 = BigInt(0xffffffff);
+export const bigmaxu64 = (bigmaxu32 << big32) | bigmaxu32;
+export const bigmaxi64 = bigmaxu64 >> BigInt(1);
 
 describe("Message", function () {
   it("decoded message should match encoded message", function () {

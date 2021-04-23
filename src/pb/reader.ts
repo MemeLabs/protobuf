@@ -1,5 +1,7 @@
-import { big0, big1, big32, big63, bigmaxi64 } from "./big";
+import { big1, big32 } from "./big";
 import { readFloat32, readFloat64 } from "./float";
+
+const textDecoder = new TextDecoder();
 
 export default class Reader {
   buf: Uint8Array;
@@ -44,47 +46,46 @@ export default class Reader {
   }
 
   int64(): bigint {
-    const v = this.uint64();
-    return v >> big63 === big0 ? v : -((~v + big1) & bigmaxi64);
+    return BigInt.asIntN(64, this.uint64());
   }
 
   uint32(): number {
-    let v = (this.buf[this.pos] & 127) >>> 0;
-    if (this.buf[this.pos++] < 128) return v;
-    v = (v | ((this.buf[this.pos] & 127) << 7)) >>> 0;
-    if (this.buf[this.pos++] < 128) return v;
-    v = (v | ((this.buf[this.pos] & 127) << 14)) >>> 0;
-    if (this.buf[this.pos++] < 128) return v;
-    v = (v | ((this.buf[this.pos] & 127) << 21)) >>> 0;
-    if (this.buf[this.pos++] < 128) return v;
-    v = (v | ((this.buf[this.pos] & 15) << 28)) >>> 0;
+    let v = this.buf[this.pos] & 127;
+    if (this.buf[this.pos++] < 128) return v >>> 0;
+    v |= (this.buf[this.pos] & 127) << 7;
+    if (this.buf[this.pos++] < 128) return v >>> 0;
+    v |= (this.buf[this.pos] & 127) << 14;
+    if (this.buf[this.pos++] < 128) return v >>> 0;
+    v |= (this.buf[this.pos] & 127) << 21;
+    if (this.buf[this.pos++] < 128) return v >>> 0;
+    v |= (this.buf[this.pos] & 15) << 28;
     return v >>> 0;
   }
 
   uint64(): bigint {
-    let lo = (this.buf[this.pos] & 127) >>> 0;
-    if (this.buf[this.pos++] < 128) return BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 7)) >>> 0;
-    if (this.buf[this.pos++] < 128) return BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 14)) >>> 0;
-    if (this.buf[this.pos++] < 128) return BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 21)) >>> 0;
-    if (this.buf[this.pos++] < 128) return BigInt(lo);
-    lo = (lo | ((this.buf[this.pos] & 127) << 28)) >>> 0;
+    let lo = this.buf[this.pos] & 127;
+    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
+    lo |= (this.buf[this.pos] & 127) << 7;
+    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
+    lo |= (this.buf[this.pos] & 127) << 14;
+    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
+    lo |= (this.buf[this.pos] & 127) << 21;
+    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
+    lo |= (this.buf[this.pos] & 127) << 28;
 
-    let hi = ((this.buf[this.pos] & 127) >> 4) >>> 0;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
-    hi = (hi | ((this.buf[this.pos] & 127) << 3)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
-    hi = (hi | ((this.buf[this.pos] & 127) << 10)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
-    hi = (hi | ((this.buf[this.pos] & 127) << 17)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
-    hi = (hi | ((this.buf[this.pos] & 127) << 24)) >>> 0;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi) << big32) | BigInt(lo);
-    hi = (hi | ((this.buf[this.pos] & 127) << 31)) >>> 0;
+    let hi = (this.buf[this.pos] & 127) >> 4;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
+    hi |= (this.buf[this.pos] & 127) << 3;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
+    hi |= (this.buf[this.pos] & 127) << 10;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
+    hi |= (this.buf[this.pos] & 127) << 17;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
+    hi |= (this.buf[this.pos] & 127) << 24;
+    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
+    hi |= (this.buf[this.pos] & 127) << 31;
     this.pos++;
-    return (BigInt(hi) << big32) | BigInt(lo);
+    return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
   }
 
   sint32(): number {
@@ -106,15 +107,13 @@ export default class Reader {
   }
 
   fixed64(): bigint {
-    const lo = BigInt(this.fixed32());
-    const hi = BigInt(this.fixed32());
-    return (hi << big32) | lo;
+    const lo = this.fixed32();
+    const hi = this.fixed32();
+    return (BigInt(hi) << big32) | BigInt(lo);
   }
 
   sfixed64(): bigint {
-    const lo = BigInt(this.fixed32());
-    const hi = BigInt(this.sfixed32());
-    return (hi << big32) | lo;
+    return BigInt.asIntN(64, this.fixed64());
   }
 
   double(): number {
@@ -124,13 +123,12 @@ export default class Reader {
   }
 
   string(): string {
-    const decoder = new TextDecoder();
-    return decoder.decode(this.bytes());
+    return textDecoder.decode(this.bytes());
   }
 
   bytes(): Uint8Array {
     const len = this.uint32();
-    const v = this.buf.slice(this.pos, this.pos + len);
+    const v = this.buf.subarray(this.pos, this.pos + len);
     this.pos += len;
     return v;
   }

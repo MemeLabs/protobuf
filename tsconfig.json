@@ -2,14 +2,19 @@
   "compilerOptions": {
     "declaration": true,
     "downlevelIteration": true,
+    "esModuleInterop": true,
     "lib": ["dom", "es2020"],
     "module": "commonjs",
     "moduleResolution": "node",
     "outDir": "lib",
+    "removeComments": true,
     "rootDir": "src",
-    "target": "es5",
-    "esModuleInterop": true
+    "target": "es5"
   },
-  "include": ["src", "tests/readwrite.test.ts"],
-  "exclude": ["lib", "node_modules", "src/**/*.test.ts", "src/apis/strims/test/**/*"]
+  "include": ["src"],
+  "exclude": [
+    "lib",
+    "node_modules",
+    "src/apis/strims/test/**/*"
+  ]
 }

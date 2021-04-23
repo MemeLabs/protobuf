@@ -1,6 +1,6 @@
 {
   "name": "@memelabs/protobuf",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "",
   "license": "MIT",
   "repository": {
@@ -8,7 +8,7 @@
     "url": "https://github.com/MemeLabs/protobuf"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --build tsconfig.lib.json",
     "test": "mocha src/**/*.ts --recursive -r ts-node/register 'src/**/*.test.ts' --timeout 60000 --exit"
   },
   "files": [

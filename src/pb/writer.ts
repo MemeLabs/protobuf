@@ -1,8 +1,10 @@
-import { big1, big127, big128, big32, big63, big7, bigmaxu32 } from "./big";
+import { big1, big32, big63, bigmsb64 } from "./big";
 import { writeFloat32, writeFloat64 } from "./float";
 
 const maxVarintLen32 = 5;
 const growthFactor = 1.5;
+
+const textEncoder = new TextEncoder();
 
 export default class Writer {
   buf: Uint8Array;
@@ -53,7 +55,7 @@ export default class Writer {
   }
 
   finish(): Uint8Array {
-    return this.buf.slice(0, this.pos);
+    return this.buf.subarray(0, this.pos);
   }
 
   int32(v: number): Writer {
@@ -62,32 +64,49 @@ export default class Writer {
 
   int64(v: bigint): Writer {
     if (v < 0) {
-      v += big1 << BigInt(64);
+      v += bigmsb64;
     }
     return this.uint64(v);
   }
 
   uint32(v: number): Writer {
-    this.grow(4);
-    while (v >= 0x80) {
-      this.buf[this.pos] = Number(v & 0x7f) | 0x80;
+    this.grow(5);
+    while (v >= 128) {
+      this.buf[this.pos++] = (v & 127) | 128;
       v >>>= 7;
-      this.pos++;
     }
-    this.buf[this.pos] = Number(v & 0x7f);
-    this.pos++;
+    this.buf[this.pos++] = v & 127;
     return this;
   }
 
   uint64(v: bigint): Writer {
-    this.grow(8);
-    while (v >= big128) {
-      this.buf[this.pos] = Number(v & big127) | 0x80;
-      v >>= big7;
-      this.pos++;
+    let lo = Number(BigInt.asUintN(32, v));
+    let hi = Number(v >> big32);
+
+    if (hi === 0) {
+      return this.uint32(lo);
     }
-    this.buf[this.pos] = Number(v & big127);
-    this.pos++;
+
+    this.grow(10);
+
+    for (let i = 0; i < 4; i++) {
+      this.buf[this.pos++] = (lo & 127) | 128;
+      lo >>>= 7;
+    }
+
+    if (hi <= 7) {
+      this.buf[this.pos++] = ((hi & 7) << 4) | lo;
+      return this;
+    }
+
+    this.buf[this.pos++] = ((hi & 7) << 4) | lo | 128;
+    hi >>>= 3;
+
+    while (hi >= 128) {
+      this.buf[this.pos++] = (hi & 127) | 128;
+      hi >>>= 7;
+    }
+    this.buf[this.pos++] = hi & 127;
     return this;
   }
 
@@ -108,8 +127,8 @@ export default class Writer {
   }
 
   fixed64(v: bigint): Writer {
-    this.fixed32(Number(v & bigmaxu32));
-    this.fixed32(Number((v >> big32) & bigmaxu32));
+    this.fixed32(Number(BigInt.asUintN(32, v)));
+    this.fixed32(Number(v >> big32));
     return this;
   }
 
@@ -125,8 +144,7 @@ export default class Writer {
   }
 
   string(v: string): Writer {
-    const encoder = new TextEncoder();
-    return this.bytes(encoder.encode(v));
+    return this.bytes(textEncoder.encode(v));
   }
 
   bytes(v: Uint8Array): Writer {
@@ -144,10 +162,10 @@ export default class Writer {
   sfixed32(v: number): Writer {
     this.grow(4);
     this.pos += 4;
-    this.buf[this.pos - 4] = v & 0xff;
-    this.buf[this.pos - 3] = (v >> 8) & 0xff;
-    this.buf[this.pos - 2] = (v >> 16) & 0xff;
-    this.buf[this.pos - 1] = (v >> 24) & 0xff;
+    this.buf[this.pos - 4] = v & 255;
+    this.buf[this.pos - 3] = (v >> 8) & 255;
+    this.buf[this.pos - 2] = (v >> 16) & 255;
+    this.buf[this.pos - 1] = (v >> 24) & 255;
     return this;
   }
 
