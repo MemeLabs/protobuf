@@ -1,6 +1,6 @@
 import assert from "assert";
 
-import { TestMessage } from "../apis/strims/rpc/test/test";
+import { TestMessage } from "../apis/strims/test/message";
 import { big32, bigmaxi64, bigmaxu32, bigmaxu64 } from "./big";
 import Reader from "./reader";
 import Writer from "./writer";

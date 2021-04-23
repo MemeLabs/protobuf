@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package strims.test;
+
+option go_package = "github.com/MemeLabs/protobuf/pkg/apis/test;test";
+option java_package = "org.memelabs.protobuf.test";
+option swift_prefix = "STR";
+
+message RPCCallUnaryRequest {
+  uint64 id = 1;
+}
+
+message RPCCallUnaryResponse {
+  uint64 id = 1;
+}
+
+message RPCCallStreamRequest {
+  uint64 id = 1;
+  uint64 count = 2;
+}
+
+message RPCCallStreamResponse {
+  uint64 id = 1;
+}
+
+service RPCTest {
+  rpc CallUnary(RPCCallUnaryRequest) returns (RPCCallUnaryResponse);
+  rpc CallStream(RPCCallStreamRequest) returns (stream RPCCallStreamResponse);
+}
