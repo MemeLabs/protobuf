@@ -56,7 +56,7 @@ export class RPCHost {
       }),
     });
 
-    this.w.write(Call.encode(call, this.callWriter.reset().fork()).ldelim().finish());
+    this.w.write(Call.encode(call, this.callWriter.reset().fork()).ldelim().finish().slice());
 
     return call;
   }
