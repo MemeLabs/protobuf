@@ -43,12 +43,12 @@ jobs:
 
           create_asset_tgz() {
             create_asset $2 $3 $4
-            tar -czf "assets/protoc-plugins-$VER-$1.tar.gz" $OUT
+            tar -czf "assets/$OUT-$1.tar.gz" $OUT
           }
 
           create_asset_zip() {
             create_asset $2 $3 $4
-            zip -r "assets/protoc-plugins-$VER-$1.zip" $OUT
+            zip -r "assets/$OUT-$1.zip" $OUT
           }
 
           create_asset_tgz "linux-x86_64" "linux" "amd64"
