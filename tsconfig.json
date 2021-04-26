@@ -14,7 +14,6 @@
   "include": ["src"],
   "exclude": [
     "lib",
-    "node_modules",
-    "src/apis/strims/test/**/*"
+    "node_modules"
   ]
 }

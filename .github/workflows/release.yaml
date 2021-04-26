@@ -1,0 +1,68 @@
+on:
+  push:
+    tags:
+      - 'v*'
+
+name: Create Release
+
+jobs:
+  build:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.16.3'
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 14
+      - run: npm install
+      - run: npm test
+      - run: npm run build
+      - uses: JS-DevTools/npm-publish@v1
+        with:
+          access: public
+          token: ${{ secrets.NPM_TOKEN }}
+      - name: Release protoc plugins
+        run: |
+          TAG="${REF##*/}"
+          VER="${TAG##v}"
+          OUT="protoc-plugins-$VER"
+
+          mkdir $OUT
+          mkdir assets
+
+          create_asset() {
+            rm -rf $OUT/*
+            GOOS=$1 GOARCH=$2 go build -o "$OUT/protoc-gen-ts$3" ./cmd/ts/
+            GOOS=$1 GOARCH=$2 go build -o "$OUT/protoc-gen-gorpc$3" ./cmd/gorpc/
+            GOOS=$1 GOARCH=$2 go build -o "$OUT/protoc-gen-tsrpc$3" ./cmd/tsrpc/
+          }
+
+          create_asset_tgz() {
+            create_asset $2 $3 $4
+            tar -czf "assets/protoc-plugins-$VER-$1.tar.gz" $OUT
+          }
+
+          create_asset_zip() {
+            create_asset $2 $3 $4
+            zip -r "assets/protoc-plugins-$VER-$1.zip" $OUT
+          }
+
+          create_asset_tgz "linux-x86_64" "linux" "amd64"
+          create_asset_tgz "linux-x86_32" "linux" "386"
+          create_asset_tgz "osx-x86_64" "darwin" "amd64"
+          create_asset_tgz "osx-arm64" "darwin" "arm64"
+          create_asset_zip "win64" "windows" "amd64" ".exe"
+          create_asset_zip "win32" "windows" "386" ".exe"
+
+          ASSETS=()
+          for ASSET in ./assets/*; do
+            ASSETS+=("-a" "$ASSET")
+          done
+          hub release create "${ASSETS[@]}" -m "protobuf $TAG" "$TAG"
+        env:
+          REF: ${{ github.ref }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

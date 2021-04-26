@@ -41,7 +41,7 @@ export class RPCHost {
     this.argWriter = new Writer();
     this.callWriter = new Writer();
 
-    this.createHandler(r);
+    r.on("data", this.handleData.bind(this));
   }
 
   public call<T>(method: string, arg: T, parentId = BigInt(0)): Call {
@@ -103,20 +103,18 @@ export class RPCHost {
     return (e as unknown) as GenericReadable<T>;
   }
 
-  private createHandler(r: Readable) {
-    r.on("data", (data: ArrayBuffer) => {
-      const reader = new Reader(new Uint8Array(data));
-      while (reader.pos < reader.len) {
-        const call = Call.decode(reader, reader.uint32());
-        const arg = anyValueType(call.argument).decode(call.argument.value);
+  private handleData(data: ArrayBuffer) {
+    const reader = new Reader(new Uint8Array(data));
+    while (reader.pos < reader.len) {
+      const call = Call.decode(reader, reader.uint32());
+      const arg = anyValueType(call.argument).decode(call.argument.value);
 
-        if (call.parentId) {
-          this.handleCallback(call, arg);
-        } else {
-          this.handleCall(call, arg);
-        }
+      if (call.parentId) {
+        this.handleCallback(call, arg);
+      } else {
+        this.handleCall(call, arg);
       }
-    });
+    }
   }
 
   private handleCallback(call: Call, arg: unknown) {
