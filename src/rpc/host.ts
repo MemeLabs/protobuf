@@ -6,6 +6,7 @@ import { Message } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import { anyValueType, registerType, typeName } from "./registry";
+import Service from "./service";
 import { Readable as GenericReadable } from "./stream";
 
 registerType("strims.rpc.Cancel", Cancel);
@@ -17,23 +18,19 @@ const CALL_TIMEOUT_MS = 5000;
 
 type CallbackHandler = (m: unknown) => void;
 
-export type Service = {
-  [key: string]: <Request, Response>(
-    call: Call,
-    arg: Request
-  ) => Response | Promise<Response> | GenericReadable<Response> | undefined;
-};
+export interface UnaryCallOptions {
+  timeout?: number;
+}
 
-// RPCHost transport agnostic remote procedure utility using protobufs.
-export class RPCHost {
+export default class Host {
   private w: Writable;
-  private service: Service;
+  private service: Service | undefined;
   private callId: bigint;
   private callbacks: Map<bigint, CallbackHandler>;
   private argWriter: Writer;
   private callWriter: Writer;
 
-  constructor(w: Writable, r: Readable, service: Service = {}) {
+  constructor(w: Writable, r: Readable, service?: Service) {
     this.w = w;
     this.service = service;
     this.callId = BigInt(0);
@@ -61,7 +58,7 @@ export class RPCHost {
     return call;
   }
 
-  public expectOne<T>(call: Call, { timeout }: { timeout?: number } = {}): Promise<T> {
+  public expectOne<T>(call: Call, { timeout }: UnaryCallOptions = {}): Promise<T> {
     return new Promise((resolve, reject) => {
       const tid = setTimeout(() => {
         reject();
@@ -127,11 +124,11 @@ export class RPCHost {
   private handleCall(call: Call, arg: unknown) {
     let res: unknown;
     try {
-      const h = this.service[call.method];
-      if (!h) {
+      const method = this.service?.methods[call.method];
+      if (!method) {
         throw new Error({ message: `method not implemented: ${call.method}` });
       }
-      res = h(call, arg);
+      res = method(arg, call);
     } catch ({ message }) {
       res = new Error({ message: String(message) });
     }

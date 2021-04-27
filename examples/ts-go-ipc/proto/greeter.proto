@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package strims.examples.greeter;
+
+option go_package = "github.com/MemeLabs/protobuf/examples/ts-go-ipc/pkg/apis/greeter;greeter";
+
+message GreetRequest {
+  string name = 1;
+}
+
+message GreetResponse {
+  string greeting = 1;
+}
+
+service Greeter {
+  rpc Greet(GreetRequest) returns (GreetResponse);
+}

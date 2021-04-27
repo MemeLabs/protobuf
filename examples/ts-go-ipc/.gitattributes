@@ -1,0 +1,4 @@
+src/apis/* linguist-generated
+pkg/apis/* linguist-generated
+go.sum linguist-generated
+package-lock.json linguist-generated

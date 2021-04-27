@@ -224,7 +224,10 @@ func (c *CallOut) SendRequest(fn SendFunc) error {
 func (c *CallOut) AssignResponse(res *CallIn) {
 	select {
 	case r := <-c.res:
-		c.errs <- unmarshalAny(res.req.Argument, r)
+		select {
+		case c.errs <- unmarshalAny(res.req.Argument, r):
+		case <-c.ctx.Done():
+		}
 	case <-c.ctx.Done():
 	}
 }

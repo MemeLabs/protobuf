@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package strims.examples.ticker;
+
+option go_package = "github.com/MemeLabs/protobuf/examples/ts-go-ipc/pkg/apis/ticker;ticker";
+
+import "google/protobuf/timestamp.proto";
+
+message TickRequest {
+  int32 times = 1;
+}
+
+message TickResponse {
+  int32 index = 1;
+  google.protobuf.Timestamp time = 2;
+}
+
+service Ticker {
+  rpc Tick(TickRequest) returns (stream TickResponse);
+}

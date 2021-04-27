@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "commonjs",
+    "target": "es6",
+    "allowJs": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "lib": ["es6", "es2020", "esnext.asynciterable"]
+  },
+  "include": [
+    ".eslintrc.js",
+    "src/**/*.ts",
+    "client.ts",
+  ],
+  "exclude": ["dist", "node_modules"]
+}

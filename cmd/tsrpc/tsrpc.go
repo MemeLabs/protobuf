@@ -70,14 +70,33 @@ func (g *generator) fullName(e pgs.Entity) string {
 	return strings.TrimPrefix(e.FullyQualifiedName(), ".")
 }
 
+func (g *generator) hasUnaryMethod(s pgs.Service) bool {
+	for _, m := range s.Methods() {
+		if !m.ServerStreaming() {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *generator) generateImports(f pgs.File) {
 	root := g.runtimePath + "/lib/"
 	if g.runtimePath == "self" {
 		root = strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), ".")+1)
 	}
 
-	g.Linef(`import { RPCHost } from "%srpc/host";`, root)
+	hostExports := ""
+	for _, s := range f.Services() {
+		if g.hasUnaryMethod(s) {
+			hostExports = ", { UnaryCallOptions as strims_rpc_UnaryCallOptions }"
+			break
+		}
+	}
+
+	g.Linef(`import strims_rpc_Host%s from "%srpc/host";`, hostExports, root)
+	g.Linef(`import strims_rpc_Service from "%srpc/service";`, root)
 	g.Linef(`import { registerType } from "%srpc/registry";`, root)
+	g.Linef(`import { Call as strims_rpc_Call } from "%sapis/strims/rpc/rpc";`, root)
 
 EachService:
 	for _, s := range f.Services() {
@@ -114,19 +133,43 @@ func (g *generator) generateTypeRegistration(f pgs.File) {
 }
 
 func (g *generator) generateService(s pgs.Service) {
+	g.Linef(`export interface %sService {`, s.Name().UpperCamelCase())
+	for _, m := range s.Methods() {
+		input := m.Input().Name().String()
+		output := m.Output().Name().UpperCamelCase().String()
+		if m.ServerStreaming() {
+			output = fmt.Sprintf("GenericReadable<%s>", output)
+		} else {
+			output = fmt.Sprintf("Promise<%[1]s> | %[1]s", output)
+		}
+
+		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s;`, m.Name().LowerCamelCase(), input, output)
+	}
+	g.Line(`}`)
+	g.LineBreak()
+
+	g.Linef(`export const register%[1]sService = (host: strims_rpc_Service, service: %[1]sService): void => {`, s.Name().UpperCamelCase())
+	for _, m := range s.Methods() {
+		input := m.Input().Name().String()
+		output := m.Output().Name().UpperCamelCase().String()
+		g.Linef(`host.registerMethod<%s, %s>("%s", service.%s.bind(service));`, input, output, g.fullName(m), m.Name().LowerCamelCase())
+	}
+	g.Line(`}`)
+	g.LineBreak()
+
 	g.Linef(`export class %sClient {`, s.Name().UpperCamelCase())
-	g.Line(`constructor(private readonly host: RPCHost) {}`)
+	g.Line(`constructor(private readonly host: strims_rpc_Host) {}`)
 	for _, m := range s.Methods() {
 		input := m.Input().Name().String()
 		output := m.Output().Name().UpperCamelCase().String()
 
 		g.LineBreak()
 		if m.ServerStreaming() {
-			g.Linef(`public %s(arg?: I%s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), input, output)
-			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(arg)));`, g.fullName(m), input)
+			g.Linef(`public %s(req?: I%s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), input, output)
+			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(req)));`, g.fullName(m), input)
 		} else {
-			g.Linef(`public %s(arg?: I%s): Promise<%s> {`, m.Name().LowerCamelCase(), input, output)
-			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(arg)));`, g.fullName(m), input)
+			g.Linef(`public %s(req?: I%s, opts?: strims_rpc_UnaryCallOptions): Promise<%s> {`, m.Name().LowerCamelCase(), input, output)
+			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(req)), opts);`, g.fullName(m), input)
 		}
 		g.Line(`}`)
 	}
