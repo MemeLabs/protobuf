@@ -119,18 +119,15 @@ func (g *generator) generateService(s pgs.Service) {
 	for _, m := range s.Methods() {
 		input := m.Input().Name().String()
 		output := m.Output().Name().UpperCamelCase().String()
-		var outputMethod string
-		if m.ServerStreaming() {
-			outputMethod = "expectMany"
-			output = fmt.Sprintf("GenericReadable<%s>", output)
-		} else {
-			outputMethod = "expectOne"
-			output = fmt.Sprintf("Promise<%s>", output)
-		}
 
 		g.LineBreak()
-		g.Linef(`public %s(arg: I%s = new %s()): %s {`, m.Name().LowerCamelCase(), input, input, output)
-		g.Linef(`return this.host.%s(this.host.call("%s", new %s(arg)));`, outputMethod, g.fullName(m), input)
+		if m.ServerStreaming() {
+			g.Linef(`public %s(arg?: I%s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), input, output)
+			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(arg)));`, g.fullName(m), input)
+		} else {
+			g.Linef(`public %s(arg?: I%s): Promise<%s> {`, m.Name().LowerCamelCase(), input, output)
+			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(arg)));`, g.fullName(m), input)
+		}
 		g.Line(`}`)
 	}
 	g.Line(`}`)

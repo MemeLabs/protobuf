@@ -19,11 +19,11 @@ registerType("strims.test.RPCCallStreamResponse", RPCCallStreamResponse);
 export class RPCTestClient {
   constructor(private readonly host: RPCHost) {}
 
-  public callUnary(arg: IRPCCallUnaryRequest = new RPCCallUnaryRequest()): Promise<RPCCallUnaryResponse> {
+  public callUnary(arg?: IRPCCallUnaryRequest): Promise<RPCCallUnaryResponse> {
     return this.host.expectOne(this.host.call("strims.test.RPCTest.CallUnary", new RPCCallUnaryRequest(arg)));
   }
 
-  public callStream(arg: IRPCCallStreamRequest = new RPCCallStreamRequest()): GenericReadable<RPCCallStreamResponse> {
+  public callStream(arg?: IRPCCallStreamRequest): GenericReadable<RPCCallStreamResponse> {
     return this.host.expectMany(this.host.call("strims.test.RPCTest.CallStream", new RPCCallStreamRequest(arg)));
   }
 }
