@@ -97,5 +97,5 @@ export declare class Readable<T> extends Stream<T> {
   removeListener(event: "error", listener: (err: Error) => void): this;
   removeListener(event: string | symbol, listener: (...args: T[]) => void): this;
 
-  [Symbol.asyncIterator]<T>(): AsyncIterableIterator<T>;
+  [Symbol.asyncIterator](): AsyncIterableIterator<T>;
 }

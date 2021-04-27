@@ -59,6 +59,7 @@ export default class Reader {
     v |= (this.buf[this.pos] & 127) << 21;
     if (this.buf[this.pos++] < 128) return v >>> 0;
     v |= (this.buf[this.pos] & 15) << 28;
+    this.pos++;
     return v >>> 0;
   }
 
