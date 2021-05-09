@@ -7,10 +7,10 @@ import (
 	"time"
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
-	"github.com/golang/protobuf/proto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -130,7 +130,7 @@ func (c *Client) CallStreaming(ctx context.Context, method string, req proto.Mes
 
 type clientDispatcher struct{}
 
-func (c *clientDispatcher) Dispatch(call *CallIn) {
+func (c *clientDispatcher) Dispatch(call *CallIn, done func()) {
 	if call.Method() != callbackMethod {
 		return
 	}
@@ -141,4 +141,5 @@ func (c *clientDispatcher) Dispatch(call *CallIn) {
 	}
 
 	parent.AssignResponse(call)
+	done()
 }

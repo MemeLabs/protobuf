@@ -3,10 +3,12 @@ package rpc
 import (
 	"context"
 	"reflect"
+	"sync"
 	"sync/atomic"
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 var nextID = new(uint64)
@@ -37,7 +39,7 @@ var responseTypeName = map[ResponseType]string{
 
 // Dispatcher ...
 type Dispatcher interface {
-	Dispatch(*CallIn)
+	Dispatch(*CallIn, func())
 }
 
 // Call ...
@@ -47,27 +49,31 @@ type Call interface {
 
 // NewCallBase ...
 func NewCallBase(ctx context.Context) CallBase {
-	ctx, cancel := context.WithCancel(ctx)
-
 	return CallBase{
-		ctx:    ctx,
-		cancel: cancel,
+		ctx: ctx,
 	}
 }
 
 // CallBase ...
 type CallBase struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	initOnce sync.Once
+	ctx      context.Context
+	cancel   context.CancelFunc
+}
+
+func (c *CallBase) init() {
+	c.ctx, c.cancel = context.WithCancel(c.ctx)
 }
 
 // Context ...
 func (c *CallBase) Context() context.Context {
+	c.initOnce.Do(c.init)
 	return c.ctx
 }
 
 // Cancel ...
 func (c *CallBase) Cancel() {
+	c.initOnce.Do(c.init)
 	c.cancel()
 }
 
@@ -107,14 +113,7 @@ func (c *CallIn) ResponseType() ResponseType {
 
 // Argument ...
 func (c *CallIn) Argument() (interface{}, error) {
-	arg, err := newAnyMessage(c.req.Argument)
-	if err != nil {
-		return nil, err
-	}
-	if err := unmarshalAny(c.req.Argument, arg); err != nil {
-		return nil, err
-	}
-	return arg, nil
+	return c.req.Argument.UnmarshalNew()
 }
 
 func (c *CallIn) sendResponse(res proto.Message) error {
@@ -189,8 +188,7 @@ func NewCallOutWithParent(ctx context.Context, method string, arg proto.Message,
 		parentID: parent.ID(),
 		method:   method,
 		arg:      arg,
-		res:      make(chan proto.Message),
-		errs:     make(chan error),
+		res:      make(chan *anypb.Any),
 	}, nil
 }
 
@@ -201,8 +199,7 @@ type CallOut struct {
 	parentID uint64
 	method   string
 	arg      proto.Message
-	res      chan proto.Message
-	errs     chan error
+	res      chan *anypb.Any
 }
 
 // ID ...
@@ -223,11 +220,7 @@ func (c *CallOut) SendRequest(fn SendFunc) error {
 // AssignResponse ...
 func (c *CallOut) AssignResponse(res *CallIn) {
 	select {
-	case r := <-c.res:
-		select {
-		case c.errs <- unmarshalAny(res.req.Argument, r):
-		case <-c.ctx.Done():
-		}
+	case c.res <- res.req.Argument:
 	case <-c.ctx.Done():
 	}
 }
@@ -235,14 +228,11 @@ func (c *CallOut) AssignResponse(res *CallIn) {
 // ReadResponse ...
 func (c *CallOut) ReadResponse(out proto.Message) error {
 	select {
-	case c.res <- out:
-		if err := <-c.errs; err != nil {
-			return err
-		}
+	case r := <-c.res:
+		return unmarshalAny(r, out)
 	case <-c.ctx.Done():
 		return c.ctx.Err()
 	}
-	return nil
 }
 
 var typeOfProtoMessage = reflect.TypeOf((*proto.Message)(nil)).Elem()

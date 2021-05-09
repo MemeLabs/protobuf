@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
-	"github.com/golang/protobuf/proto"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 // NewHTTPServer ...
@@ -41,7 +41,7 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	call := NewCallIn(r.Context(), req, noopParentCallAccessor{}, send)
 
-	s.ServiceDispatcher.Dispatch(call)
+	s.ServiceDispatcher.Dispatch(call, func() {})
 }
 
 func httpServeError(statusCode int, err error, w http.ResponseWriter) error {
@@ -55,18 +55,14 @@ func httpServeError(statusCode int, err error, w http.ResponseWriter) error {
 func httpServeProto(m proto.Message, w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/protobuf")
 
-	b := callBuffers.Get().(*proto.Buffer)
-	defer callBuffers.Put(b)
-	b.Reset()
-
-	if err := b.EncodeVarint(uint64(proto.Size(m))); err != nil {
-		return err
-	}
-	if err := b.Marshal(m); err != nil {
+	b := bufPool.Get().([]byte)[:0]
+	b, err := marshalAppendLengthDelimited(b, m)
+	defer bufPool.Put(b)
+	if err != nil {
 		return err
 	}
 
-	if _, err := w.Write(b.Bytes()); err != nil {
+	if _, err := w.Write(b); err != nil {
 		return err
 	}
 

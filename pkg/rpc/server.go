@@ -6,10 +6,10 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -76,12 +76,12 @@ func (h *ServiceDispatcher) RegisterMethod(name string, method interface{}) {
 }
 
 // Dispatch ...
-func (h *ServiceDispatcher) Dispatch(call *CallIn) {
+func (h *ServiceDispatcher) Dispatch(call *CallIn, done func()) {
 	switch call.Method() {
 	case cancelMethod:
 		h.cancel(call)
 	default:
-		h.call(call)
+		go h.call(call, done)
 	}
 }
 
@@ -91,7 +91,7 @@ func (h *ServiceDispatcher) cancel(call *CallIn) {
 	}
 }
 
-func (h *ServiceDispatcher) call(call *CallIn) {
+func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 	method, ok := h.methods[call.Method()]
 	if !ok {
 		call.returnError(fmt.Errorf("method not found: %s", call.Method()))
@@ -100,6 +100,8 @@ func (h *ServiceDispatcher) call(call *CallIn) {
 
 	method.requestCount.Inc()
 	defer func(start time.Time) {
+		done()
+
 		if err := recoverError(recover()); err != nil {
 			method.errorCount.Inc()
 			h.logger.Error("call handler panicked", zap.Error(err), zap.Stack("stack"))

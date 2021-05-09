@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 // ErrNotImplemented ...

@@ -9,8 +9,8 @@ import (
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"github.com/MemeLabs/protobuf/pkg/bytereader"
-	"github.com/golang/protobuf/proto"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 const defaultMaxMessageBytes = 512 * 1024
@@ -38,6 +38,10 @@ func (d *RWDialer) Dial(ctx context.Context, dispatcher Dispatcher) (Transport, 
 		rw:              d.ReadWriter,
 		maxMessageBytes: maxMessageBytes,
 		dispatcher:      dispatcher,
+		calls: &rwParentCallMap{
+			callsIn:  map[uint64]*CallIn{},
+			callsOut: map[uint64]*CallOut{},
+		},
 	}, nil
 }
 
@@ -47,17 +51,18 @@ type RWTransport struct {
 	logger          *zap.Logger
 	rw              io.ReadWriter
 	maxMessageBytes int
-	callsIn         sync.Map
-	callsOut        sync.Map
 	dispatcher      Dispatcher
+	calls           *rwParentCallMap
+	wbuf            []byte
 }
 
 // Listen reads incoming calls
 func (t *RWTransport) Listen() error {
-	var b []byte
+	b := make([]byte, 1024)
+	brw := bytereader.New(t.rw)
 
 	for {
-		l, err := binary.ReadUvarint(bytereader.New(t.rw))
+		l, err := binary.ReadUvarint(brw)
 		if err != nil {
 			return err
 		}
@@ -78,18 +83,10 @@ func (t *RWTransport) Listen() error {
 			continue
 		}
 
-		parentCallAccessor := &rwParentCallAccessor{
-			id:       req.ParentId,
-			callsIn:  &t.callsIn,
-			callsOut: &t.callsOut,
-		}
-		call := NewCallIn(t.ctx, req, parentCallAccessor, t.send)
+		call := NewCallIn(t.ctx, req, t.calls.Accessor(req.ParentId), t.send)
 
-		t.callsIn.Store(req.Id, call)
-		go func() {
-			t.dispatcher.Dispatch(call)
-			t.callsIn.Delete(req.Id)
-		}()
+		t.calls.SetCallIn(req.Id, call)
+		t.dispatcher.Dispatch(call, func() { t.calls.DeleteCallIn(req.Id) })
 
 		if err := t.ctx.Err(); err != nil {
 			return err
@@ -98,18 +95,14 @@ func (t *RWTransport) Listen() error {
 }
 
 func (t *RWTransport) send(ctx context.Context, call *pb.Call) error {
-	b := callBuffers.Get().(*proto.Buffer)
-	defer callBuffers.Put(b)
-	b.Reset()
-
-	if err := b.EncodeVarint(uint64(proto.Size(call))); err != nil {
-		return err
-	}
-	if err := b.Marshal(call); err != nil {
+	b := bufPool.Get().([]byte)[:0]
+	b, err := marshalAppendLengthDelimited(b, call)
+	defer bufPool.Put(b)
+	if err != nil {
 		return err
 	}
 
-	if _, err := t.rw.Write(b.Bytes()); err != nil {
+	if _, err := t.rw.Write(b); err != nil {
 		return err
 	}
 
@@ -118,8 +111,8 @@ func (t *RWTransport) send(ctx context.Context, call *pb.Call) error {
 
 // Call ...
 func (t *RWTransport) Call(call *CallOut, fn ResponseFunc) error {
-	t.callsOut.Store(call.ID(), call)
-	defer t.callsOut.Delete(call.ID())
+	t.calls.SetCallOut(call.ID(), call)
+	defer t.calls.DeleteCallOut(call.ID())
 
 	if err := call.SendRequest(t.send); err != nil {
 		return err
@@ -128,22 +121,62 @@ func (t *RWTransport) Call(call *CallOut, fn ResponseFunc) error {
 	return fn()
 }
 
+type rwParentCallMap struct {
+	callsInLock  sync.Mutex
+	callsIn      map[uint64]*CallIn
+	callsOutLock sync.Mutex
+	callsOut     map[uint64]*CallOut
+}
+
+func (m *rwParentCallMap) SetCallIn(id uint64, c *CallIn) {
+	m.callsInLock.Lock()
+	defer m.callsInLock.Unlock()
+	m.callsIn[id] = c
+}
+
+func (m *rwParentCallMap) CallIn(id uint64) *CallIn {
+	m.callsInLock.Lock()
+	defer m.callsInLock.Unlock()
+	return m.callsIn[id]
+}
+
+func (m *rwParentCallMap) DeleteCallIn(id uint64) {
+	m.callsInLock.Lock()
+	defer m.callsInLock.Unlock()
+	delete(m.callsIn, id)
+}
+
+func (m *rwParentCallMap) SetCallOut(id uint64, c *CallOut) {
+	m.callsOutLock.Lock()
+	defer m.callsOutLock.Unlock()
+	m.callsOut[id] = c
+}
+
+func (m *rwParentCallMap) CallOut(id uint64) *CallOut {
+	m.callsOutLock.Lock()
+	defer m.callsOutLock.Unlock()
+	return m.callsOut[id]
+}
+
+func (m *rwParentCallMap) DeleteCallOut(id uint64) {
+	m.callsOutLock.Lock()
+	defer m.callsOutLock.Unlock()
+	delete(m.callsOut, id)
+}
+
+func (m *rwParentCallMap) Accessor(id uint64) ParentCallAccessor {
+	return &rwParentCallAccessor{id, m}
+}
+
 type rwParentCallAccessor struct {
-	id       uint64
-	callsIn  *sync.Map
-	callsOut *sync.Map
+	id uint64
+	m  *rwParentCallMap
 }
 
 func (a *rwParentCallAccessor) ParentCallIn() *CallIn {
-	if p, ok := a.callsIn.Load(a.id); ok {
-		return p.(*CallIn)
-	}
-	return nil
+	return a.m.CallIn(a.id)
 }
 
 func (a *rwParentCallAccessor) ParentCallOut() *CallOut {
-	if p, ok := a.callsOut.Load(a.id); ok {
-		return p.(*CallOut)
-	}
-	return nil
+	return a.m.CallOut(a.id)
 }
