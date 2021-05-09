@@ -1,5 +1,9 @@
 ```
-npx ts-node client.ts
+npx ts-node src/client.ts
+```
+
+```
+go run ./cmd/client/.
 ```
 
 ```
@@ -11,5 +15,5 @@ protoc \
 	--gorpc_opt=module=github.com/MemeLabs/protobuf/examples/ts-go-ipc/pkg/apis \
 	--ts_out=src/apis \
 	--tsrpc_out=src/apis \
-	greeter.proto ticker.proto
+	greeter.proto ticker.proto tester.proto
 ```

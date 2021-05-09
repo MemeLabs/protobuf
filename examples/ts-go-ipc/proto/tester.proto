@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package strims.examples.tester;
+
+option go_package = "github.com/MemeLabs/protobuf/examples/ts-go-ipc/pkg/apis/tester;tester";
+
+message UnaryRequest {
+  int64 value = 1;
+}
+
+message UnaryResponse {
+  int64 value = 1;
+}
+
+message StreamRequest {
+  int64 value = 1;
+}
+
+message StreamResponse {
+  int64 value = 1;
+}
+
+service Tester {
+  rpc Unary(UnaryRequest) returns (UnaryResponse);
+  rpc Stream(StreamRequest) returns (stream StreamResponse);
+}

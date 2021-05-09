@@ -6,7 +6,7 @@ import { Message } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import { anyValueType, registerType, typeName } from "./registry";
-import Service from "./service";
+import ServiceRegistry from "./service";
 import { Readable as GenericReadable } from "./stream";
 
 registerType("strims.rpc.Cancel", Cancel);
@@ -24,13 +24,13 @@ export interface UnaryCallOptions {
 
 export default class Host {
   private w: Writable;
-  private service: Service | undefined;
+  private service: ServiceRegistry | undefined;
   private callId: bigint;
   private callbacks: Map<bigint, CallbackHandler>;
   private argWriter: Writer;
   private callWriter: Writer;
 
-  constructor(w: Writable, r: Readable, service?: Service) {
+  constructor(w: Writable, r: Readable, service?: ServiceRegistry) {
     this.w = w;
     this.service = service;
     this.callId = BigInt(0);

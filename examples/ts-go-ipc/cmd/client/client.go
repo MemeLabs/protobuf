@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,14 +20,25 @@ type stdio struct {
 	io.Writer
 }
 
+var server = flag.String("server", "node", "server process to run")
+
 func main() {
+	flag.Parse()
+
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)
 	}
 
-	cmd := exec.Command("go", "run", "./cmd/server/")
-	// cmd := exec.Command("npx", "ts-node", "./src/server.ts")
+	var cmd *exec.Cmd
+	switch *server {
+	case "go":
+		cmd = exec.Command("go", "run", "./cmd/server/")
+	case "node":
+		cmd = exec.Command("npx", "ts-node", "./src/server.ts")
+	default:
+		panic("invalid server name")
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

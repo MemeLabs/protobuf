@@ -1,6 +1,7 @@
 import { PassThrough } from "stream";
 
 import Host from "@memelabs/protobuf/lib/rpc/host";
+import ServiceRegistry from "@memelabs/protobuf/lib/rpc/service";
 import { Readable } from "@memelabs/protobuf/lib/rpc/stream";
 
 import { GreetRequest, GreetResponse } from "./apis/strims/examples/greeter/greeter";
@@ -43,8 +44,9 @@ class Service {
   }
 }
 
-const host = new Host(process.stdout, process.stdin);
-
 const service = new Service();
-registerGreeterService(host, service);
-registerTickerService(host, service);
+
+const serviceRegistry = new ServiceRegistry();
+registerGreeterService(serviceRegistry, service);
+registerTickerService(serviceRegistry, service);
+new Host(process.stdout, process.stdin, serviceRegistry);
