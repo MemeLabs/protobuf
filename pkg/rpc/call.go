@@ -163,6 +163,7 @@ func (c *CallIn) returnStream(v interface{}) {
 
 		if !ok {
 			c.sendResponse(&pb.Close{})
+			c.cancel()
 			return
 		}
 

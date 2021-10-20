@@ -133,7 +133,7 @@ func (g *generator) generateImports(f pgs.File) {
 				break
 			}
 		}
-		prefix := "."
+		prefix := "./"
 		if uniquePrefixLength := len(fparts) - commonPrefixLength; uniquePrefixLength != 0 {
 			prefix = strings.Repeat("../", uniquePrefixLength)
 		}
@@ -169,11 +169,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 	// constructor argument interface
 	g.Linef(`export type I%s = {`, className)
 	for _, f := range m.NonOneOfFields() {
-		undef := ""
-		if f.Type().IsEmbed() {
-			undef = " | undefined"
-		}
-		g.Linef(`%s?: %s%s;`, g.fieldName(f), g.fieldInfo(f).tsIfType, undef)
+		g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsIfType)
 	}
 	for _, o := range m.OneOfs() {
 		g.Linef(`%s?: %s`, o.Name().LowerCamelCase(), g.oneOfNameWithPrefix(o, "I"))
