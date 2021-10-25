@@ -70,10 +70,10 @@ export default class Host {
 
         switch (res.kind) {
           case Call.Kind.CALL_KIND_DEFAULT:
-            resolve(Message.decode(call.argument));
+            resolve(Message.decode(res.argument));
             break;
           case Call.Kind.CALL_KIND_ERROR:
-            reject(Error.decode(call.argument));
+            reject(Error.decode(res.argument));
             break;
         }
       });

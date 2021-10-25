@@ -69,7 +69,7 @@ type ServiceDispatcher struct {
 func (h *ServiceDispatcher) RegisterMethod(name string, method interface{}) {
 	h.methods[name] = serviceMethod{
 		fn:                reflect.ValueOf(method),
-		arg:               reflect.TypeOf(method).In(1),
+		arg:               reflect.TypeOf(method).In(1).Elem(),
 		requestCount:      serverRequestCount.WithLabelValues(name),
 		requestDurationMs: serverRequestDurationMs.WithLabelValues(name),
 		errorCount:        serverRequestCount.WithLabelValues(name),
