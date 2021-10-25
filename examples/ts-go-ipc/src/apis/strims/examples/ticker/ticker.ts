@@ -44,7 +44,7 @@ export class TickRequest {
 
 export type ITickResponse = {
   index?: number;
-  time?: google_protobuf_ITimestamp | undefined;
+  time?: google_protobuf_ITimestamp;
 }
 
 export class TickResponse {

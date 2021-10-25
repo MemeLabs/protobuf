@@ -1,18 +1,11 @@
 import { PassThrough, Readable, Writable } from "stream";
 
-import { Any } from "../apis/google/protobuf/any";
 import { Call, Cancel, Close, Error, Undefined } from "../apis/strims/rpc/rpc";
-import { Message } from "../pb/message";
+import { Message, MessageClass } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
-import { anyValueType, registerType, typeName } from "./registry";
 import ServiceRegistry from "./service";
 import { Readable as GenericReadable } from "./stream";
-
-registerType("strims.rpc.Cancel", Cancel);
-registerType("strims.rpc.Close", Close);
-registerType("strims.rpc.Error", Error);
-registerType("strims.rpc.Undefined", Undefined);
 
 const CALL_TIMEOUT_MS = 5000;
 
@@ -41,16 +34,18 @@ export default class Host {
     r.on("data", this.handleData.bind(this));
   }
 
-  public call<T>(method: string, arg: T, parentId = BigInt(0)): Call {
-    const ctor = ((arg as unknown) as Message<T>).constructor;
+  public call(
+    method: string,
+    arg: unknown,
+    kind: Call.Kind = Call.Kind.CALL_KIND_DEFAULT,
+    parentId = BigInt(0)
+  ): Call {
     const call = new Call({
       id: ++this.callId,
       parentId,
       method,
-      argument: new Any({
-        typeUrl: `strims.gg/${typeName(ctor)}`,
-        value: ctor.encode(arg, this.argWriter.reset()).finish(),
-      }),
+      kind,
+      argument: (arg as Message<unknown>).constructor.encode(arg, this.argWriter.reset()).finish(),
     });
 
     this.w.write(Call.encode(call, this.callWriter.reset().fork()).ldelim().finish().slice());
@@ -58,42 +53,52 @@ export default class Host {
     return call;
   }
 
-  public expectOne<T>(call: Call, { timeout }: UnaryCallOptions = {}): Promise<T> {
+  public expectOne<T>(
+    call: Call,
+    Message: MessageClass<T>,
+    { timeout }: UnaryCallOptions = {}
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
       const tid = setTimeout(() => {
         reject();
         this.callbacks.delete(call.id);
       }, timeout || CALL_TIMEOUT_MS);
 
-      this.callbacks.set(call.id, (res: unknown) => {
+      this.callbacks.set(call.id, (res: Call) => {
         clearTimeout(tid);
         this.callbacks.delete(call.id);
 
-        if (res instanceof Error) {
-          reject(res);
-        } else {
-          resolve(res as T);
+        switch (res.kind) {
+          case Call.Kind.CALL_KIND_DEFAULT:
+            resolve(Message.decode(call.argument));
+            break;
+          case Call.Kind.CALL_KIND_ERROR:
+            reject(Error.decode(call.argument));
+            break;
         }
       });
     });
   }
 
-  public expectMany<T>(call: Call): GenericReadable<T> {
+  public expectMany<T>(call: Call, Message: MessageClass<T>): GenericReadable<T> {
     const e = new PassThrough({
       objectMode: true,
     });
 
-    e.on("close", () => this.call("CANCEL", new Cancel(), call.id));
+    e.on("close", () => this.call("CANCEL", new Cancel(), Call.Kind.CALL_KIND_CANCEL, call.id));
 
-    this.callbacks.set(call.id, (r: unknown) => {
-      if (r instanceof Error) {
-        this.callbacks.delete(call.id);
-        e.emit("error", new Error({ message: r.message }));
-      } else if (r instanceof Close) {
-        this.callbacks.delete(call.id);
-        e.push(null);
-      } else {
-        e.push(r);
+    this.callbacks.set(call.id, (res: Call) => {
+      switch (res.kind) {
+        case Call.Kind.CALL_KIND_DEFAULT:
+          e.push(Message.decode(res.argument));
+          break;
+        case Call.Kind.CALL_KIND_ERROR:
+          e.emit("error", Error.decode(res.argument));
+          break;
+        case Call.Kind.CALL_KIND_CLOSE:
+          this.callbacks.delete(call.id);
+          e.push(null);
+          break;
       }
     });
 
@@ -104,48 +109,42 @@ export default class Host {
     const reader = new Reader(new Uint8Array(data));
     while (reader.pos < reader.len) {
       const call = Call.decode(reader, reader.uint32());
-      const arg = anyValueType(call.argument).decode(call.argument.value);
-
       if (call.parentId) {
-        this.handleCallback(call, arg);
+        this.callbacks.get(call.parentId)?.(call);
       } else {
-        this.handleCall(call, arg);
+        this.handleCall(call);
       }
     }
   }
 
-  private handleCallback(call: Call, arg: unknown) {
-    const cb = this.callbacks.get(call.parentId);
-    if (cb) {
-      cb(arg);
-    }
-  }
-
-  private handleCall(call: Call, arg: unknown) {
+  private handleCall(call: Call) {
     let res: unknown;
-    try {
-      const method = this.service?.methods[call.method];
-      if (!method) {
-        throw new Error({ message: `method not implemented: ${call.method}` });
+    const method = this.service?.methods[call.method];
+    if (method) {
+      try {
+        res = method.callback(method.reqType.decode(call.argument), call);
+      } catch ({ message }) {
+        res = new Error({ message: String(message) });
       }
-      res = method(arg, call);
-    } catch ({ message }) {
-      res = new Error({ message: String(message) });
+    } else {
+      res = new Error({ message: `method not implemented: ${call.method}` });
     }
 
     if (res instanceof Readable) {
-      res.on("data", (d) => this.call("CALLBACK", d, call.id));
-      res.on("close", () => this.call("CALLBACK", new Close(), call.id));
+      res.on("data", (v) => this.call("CALLBACK", v, Call.Kind.CALL_KIND_DEFAULT, call.id));
+      res.on("close", () => this.call("CALLBACK", new Close(), Call.Kind.CALL_KIND_CLOSE, call.id));
     } else if (res instanceof Promise) {
-      void res.then((d) => this.call("CALLBACK", d, call.id));
+      void res.then((v) => this.call("CALLBACK", v, Call.Kind.CALL_KIND_DEFAULT, call.id));
       res.catch(({ message }) => {
         const e = new Error({ message: String(message) });
-        this.call("CALLBACK", e, call.id);
+        this.call("CALLBACK", e, Call.Kind.CALL_KIND_ERROR, call.id);
       });
+    } else if (res instanceof Error) {
+      this.call("CALLBACK", res, Call.Kind.CALL_KIND_ERROR, call.id);
     } else if (res === undefined) {
-      this.call("CALLBACK", new Undefined(), call.id);
+      this.call("CALLBACK", new Undefined(), Call.Kind.CALL_KIND_UNDEFINED, call.id);
     } else {
-      this.call("CALLBACK", res, call.id);
+      this.call("CALLBACK", res, Call.Kind.CALL_KIND_DEFAULT, call.id);
     }
   }
 }

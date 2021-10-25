@@ -69,6 +69,7 @@ type ServiceDispatcher struct {
 func (h *ServiceDispatcher) RegisterMethod(name string, method interface{}) {
 	h.methods[name] = serviceMethod{
 		fn:                reflect.ValueOf(method),
+		arg:               reflect.TypeOf(method).In(1),
 		requestCount:      serverRequestCount.WithLabelValues(name),
 		requestDurationMs: serverRequestDurationMs.WithLabelValues(name),
 		errorCount:        serverRequestCount.WithLabelValues(name),
@@ -118,14 +119,14 @@ func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 		)
 	}(time.Now())
 
-	arg, err := call.Argument()
-	if err != nil {
+	arg := reflect.New(method.arg)
+	if err := call.Argument(arg.Interface().(proto.Message)); err != nil {
 		serverErrorCount.WithLabelValues(call.Method()).Inc()
 		call.returnError(err)
 		return
 	}
 
-	rs := method.fn.Call([]reflect.Value{reflect.ValueOf(call.Context()), reflect.ValueOf(arg)})
+	rs := method.fn.Call([]reflect.Value{reflect.ValueOf(call.Context()), arg})
 	if len(rs) == 0 {
 		call.returnUndefined()
 	} else if err, ok := rs[len(rs)-1].Interface().(error); ok && err != nil {
@@ -142,6 +143,7 @@ func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 
 type serviceMethod struct {
 	fn                reflect.Value
+	arg               reflect.Type
 	requestCount      prometheus.Counter
 	requestDurationMs prometheus.Observer
 	errorCount        prometheus.Counter

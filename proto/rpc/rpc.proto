@@ -6,14 +6,21 @@ option go_package = "github.com/MemeLabs/protobuf/pkg/apis/rpc;rpc";
 option java_package = "org.memelabs.protobuf.rpc";
 option swift_prefix = "SRC";
 
-import "google/protobuf/any.proto";
-
 message Call {
+  enum Kind {
+    CALL_KIND_DEFAULT = 0;
+    CALL_KIND_ERROR = 1;
+    CALL_KIND_CANCEL = 2;
+    CALL_KIND_CLOSE = 3;
+    CALL_KIND_UNDEFINED = 4;
+  }
+
   uint64 id = 1;
   uint64 parent_id = 2;
   string method = 3;
-  google.protobuf.Any argument = 4;
-  map<string, bytes> headers = 5;
+  Kind kind = 4;
+  bytes argument = 5;
+  map<string, bytes> headers = 6;
 }
 
 message Error {

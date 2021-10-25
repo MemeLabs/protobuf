@@ -8,7 +8,6 @@ import (
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 var nextID = new(uint64)
@@ -47,10 +46,13 @@ type Call interface {
 	ID() uint64
 }
 
+var noopCancelFunc = func() {}
+
 // NewCallBase ...
 func NewCallBase(ctx context.Context) CallBase {
 	return CallBase{
-		ctx: ctx,
+		ctx:    ctx,
+		cancel: noopCancelFunc,
 	}
 }
 
@@ -112,32 +114,33 @@ func (c *CallIn) ResponseType() ResponseType {
 }
 
 // Argument ...
-func (c *CallIn) Argument() (interface{}, error) {
-	return c.req.Argument.UnmarshalNew()
+func (c *CallIn) Argument(arg proto.Message) error {
+	return proto.Unmarshal(c.req.Argument, arg)
 }
 
-func (c *CallIn) sendResponse(res proto.Message) error {
-	id := atomic.AddUint64(nextID, 1)
+func (c *CallIn) sendResponse(kind pb.Call_Kind, res proto.Message) error {
+	// c.responseKind = kind
 
-	if err := send(c.ctx, id, c.req.Id, callbackMethod, res, c.send); err != nil {
+	id := atomic.AddUint64(nextID, 1)
+	if err := send(c.ctx, id, c.req.Id, callbackMethod, kind, res, c.send); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (c *CallIn) returnUndefined() {
-	c.responseType = ResponseTypeUndefined
-	c.sendResponse(&pb.Undefined{})
+	c.sendResponse(pb.Call_CALL_KIND_UNDEFINED, &pb.Undefined{})
+	c.cancel()
 }
 
 func (c *CallIn) returnError(err error) {
-	c.responseType = ResponseTypeError
-	c.sendResponse(&pb.Error{Message: err.Error()})
+	c.sendResponse(pb.Call_CALL_KIND_ERROR, &pb.Error{Message: err.Error()})
+	c.cancel()
 }
 
 func (c *CallIn) returnValue(v proto.Message) {
-	c.responseType = ResponseTypeValue
-	c.sendResponse(v)
+	c.sendResponse(pb.Call_CALL_KIND_DEFAULT, v)
+	c.cancel()
 }
 
 func (c *CallIn) returnStream(v interface{}) {
@@ -162,12 +165,12 @@ func (c *CallIn) returnStream(v interface{}) {
 		}
 
 		if !ok {
-			c.sendResponse(&pb.Close{})
+			c.sendResponse(pb.Call_CALL_KIND_CLOSE, &pb.Close{})
 			c.cancel()
 			return
 		}
 
-		if err := c.sendResponse(v.Interface().(proto.Message)); err != nil {
+		if err := c.sendResponse(pb.Call_CALL_KIND_DEFAULT, v.Interface().(proto.Message)); err != nil {
 			c.cancel()
 			return
 		}
@@ -189,7 +192,7 @@ func NewCallOutWithParent(ctx context.Context, method string, arg proto.Message,
 		parentID: parent.ID(),
 		method:   method,
 		arg:      arg,
-		res:      make(chan *anypb.Any),
+		res:      make(chan *pb.Call),
 	}, nil
 }
 
@@ -200,7 +203,7 @@ type CallOut struct {
 	parentID uint64
 	method   string
 	arg      proto.Message
-	res      chan *anypb.Any
+	res      chan *pb.Call
 }
 
 // ID ...
@@ -215,13 +218,13 @@ func (c *CallOut) Method() string {
 
 // SendRequest ...
 func (c *CallOut) SendRequest(fn SendFunc) error {
-	return send(c.ctx, c.id, c.parentID, c.method, c.arg, fn)
+	return send(c.ctx, c.id, c.parentID, c.method, pb.Call_CALL_KIND_DEFAULT, c.arg, fn)
 }
 
 // AssignResponse ...
 func (c *CallOut) AssignResponse(res *CallIn) {
 	select {
-	case c.res <- res.req.Argument:
+	case c.res <- res.req:
 	case <-c.ctx.Done():
 	}
 }
@@ -230,7 +233,7 @@ func (c *CallOut) AssignResponse(res *CallIn) {
 func (c *CallOut) ReadResponse(out proto.Message) error {
 	select {
 	case r := <-c.res:
-		return unmarshalAny(r, out)
+		return unmarshalResponse(r.Kind, r.Argument, out)
 	case <-c.ctx.Done():
 		return c.ctx.Err()
 	}

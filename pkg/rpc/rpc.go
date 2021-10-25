@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"sync"
 
 	// "sync"
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoregistry"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const (
@@ -45,29 +42,20 @@ var ErrClose = errors.New("response closed")
 // expected value
 var ErrInvalidType = errors.New("invaild type")
 
-func unmarshalAny(a *anypb.Any, v proto.Message) error {
-	mt, err := protoregistry.GlobalTypes.FindMessageByURL(a.GetTypeUrl())
-	if err != nil {
-		return err
-	}
-
-	switch mt {
-	case v.ProtoReflect().Type():
-		return a.UnmarshalTo(v)
-	case typeOfClose:
-		return ErrClose
-	case typeOfError:
+func unmarshalResponse(kind pb.Call_Kind, b []byte, v proto.Message) error {
+	switch kind {
+	case pb.Call_CALL_KIND_DEFAULT:
+		return proto.Unmarshal(b, v)
+	case pb.Call_CALL_KIND_ERROR:
 		ev := &pb.Error{}
-		if err := a.UnmarshalTo(ev); err != nil {
+		if err := proto.Unmarshal(b, ev); err != nil {
 			return err
 		}
 		return errors.New(ev.Message)
+	case pb.Call_CALL_KIND_CLOSE:
+		return ErrClose
 	default:
-		return fmt.Errorf(
-			"Using %s as type %s",
-			mt.Descriptor().Name(),
-			v.ProtoReflect().Type().Descriptor().Name(),
-		)
+		return ErrInvalidType
 	}
 }
 
@@ -80,7 +68,7 @@ var bufPool = sync.Pool{
 // SendFunc ...
 type SendFunc func(context.Context, *pb.Call) error
 
-func send(ctx context.Context, id, parentID uint64, method string, arg proto.Message, fn SendFunc) error {
+func send(ctx context.Context, id, parentID uint64, method string, kind pb.Call_Kind, arg proto.Message, fn SendFunc) error {
 	b := bufPool.Get().([]byte)[:0]
 	b, err := proto.MarshalOptions{}.MarshalAppend(b, arg)
 	defer bufPool.Put(b)
@@ -92,11 +80,9 @@ func send(ctx context.Context, id, parentID uint64, method string, arg proto.Mes
 		Id:       id,
 		ParentId: parentID,
 		Method:   method,
-		Argument: &anypb.Any{
-			TypeUrl: anyURLPrefix + string(arg.ProtoReflect().Descriptor().FullName()),
-			Value:   b,
-		},
-		Headers: map[string][]byte{},
+		Kind:     kind,
+		Argument: b,
+		Headers:  map[string][]byte{},
 	}
 	return fn(ctx, rc)
 }

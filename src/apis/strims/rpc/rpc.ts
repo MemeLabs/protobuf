@@ -1,16 +1,13 @@
 import Reader from "../../../pb/reader";
 import Writer from "../../../pb/writer";
 
-import {
-  Any as google_protobuf_Any,
-  IAny as google_protobuf_IAny,
-} from "../../google/protobuf/any";
 
 export type ICall = {
   id?: bigint;
   parentId?: bigint;
   method?: string;
-  argument?: google_protobuf_IAny | undefined;
+  kind?: Call.Kind;
+  argument?: Uint8Array;
   headers?: Map<string, Uint8Array> | { [key: string]: Uint8Array };
 }
 
@@ -18,14 +15,16 @@ export class Call {
   id: bigint;
   parentId: bigint;
   method: string;
-  argument: google_protobuf_Any | undefined;
+  kind: Call.Kind;
+  argument: Uint8Array;
   headers: Map<string, Uint8Array>;
 
   constructor(v?: ICall) {
     this.id = v?.id || BigInt(0);
     this.parentId = v?.parentId || BigInt(0);
     this.method = v?.method || "";
-    this.argument = v?.argument && new google_protobuf_Any(v.argument);
+    this.kind = v?.kind || 0;
+    this.argument = v?.argument || new Uint8Array();
     if (v?.headers) this.headers = v.headers instanceof Map ? v.headers : new Map(Object.entries(v.headers));
     else this.headers = new Map<string, Uint8Array>();
   }
@@ -35,8 +34,9 @@ export class Call {
     if (m.id) w.uint32(8).uint64(m.id);
     if (m.parentId) w.uint32(16).uint64(m.parentId);
     if (m.method) w.uint32(26).string(m.method);
-    if (m.argument) google_protobuf_Any.encode(m.argument, w.uint32(34).fork()).ldelim();
-    for (const [k, v] of m.headers) w.uint32(42).fork().uint32(10).string(k).uint32(18).bytes(v).ldelim();
+    if (m.kind) w.uint32(32).uint32(m.kind);
+    if (m.argument) w.uint32(42).bytes(m.argument);
+    for (const [k, v] of m.headers) w.uint32(50).fork().uint32(10).string(k).uint32(18).bytes(v).ldelim();
     return w;
   }
 
@@ -57,9 +57,12 @@ export class Call {
         m.method = r.string();
         break;
         case 4:
-        m.argument = google_protobuf_Any.decode(r, r.uint32());
+        m.kind = r.uint32();
         break;
         case 5:
+        m.argument = r.bytes();
+        break;
+        case 6:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
@@ -85,6 +88,16 @@ export class Call {
       }
     }
     return m;
+  }
+}
+
+export namespace Call {
+  export enum Kind {
+    CALL_KIND_DEFAULT = 0,
+    CALL_KIND_ERROR = 1,
+    CALL_KIND_CANCEL = 2,
+    CALL_KIND_CLOSE = 3,
+    CALL_KIND_UNDEFINED = 4,
   }
 }
 

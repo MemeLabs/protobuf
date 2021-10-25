@@ -59,7 +59,6 @@ type generator struct {
 
 func (g *generator) generateFile(f pgs.File) {
 	g.generateImports(f)
-	g.generateTypeRegistration(f)
 
 	for _, s := range f.Services() {
 		g.generateService(s)
@@ -95,7 +94,6 @@ func (g *generator) generateImports(f pgs.File) {
 
 	g.Linef(`import strims_rpc_Host%s from "%srpc/host";`, hostExports, root)
 	g.Linef(`import strims_rpc_Service from "%srpc/service";`, root)
-	g.Linef(`import { registerType } from "%srpc/registry";`, root)
 	g.Linef(`import { Call as strims_rpc_Call } from "%sapis/strims/rpc/rpc";`, root)
 
 EachService:
@@ -122,16 +120,6 @@ EachService:
 	g.LineBreak()
 }
 
-func (g *generator) generateTypeRegistration(f pgs.File) {
-	for _, s := range f.Services() {
-		for _, m := range s.Methods() {
-			g.Linef(`registerType("%s", %s);`, g.fullName(m.Input()), m.Input().Name())
-			g.Linef(`registerType("%s", %s);`, g.fullName(m.Output()), m.Output().Name())
-		}
-	}
-	g.LineBreak()
-}
-
 func (g *generator) generateService(s pgs.Service) {
 	g.Linef(`export interface %sService {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
@@ -152,7 +140,7 @@ func (g *generator) generateService(s pgs.Service) {
 	for _, m := range s.Methods() {
 		input := m.Input().Name().String()
 		output := m.Output().Name().UpperCamelCase().String()
-		g.Linef(`host.registerMethod<%s, %s>("%s", service.%s.bind(service));`, input, output, g.fullName(m), m.Name().LowerCamelCase())
+		g.Linef(`host.registerMethod<%s, %s>("%s", service.%s.bind(service), %s);`, input, output, g.fullName(m), m.Name().LowerCamelCase(), input)
 	}
 	g.Line(`}`)
 	g.LineBreak()
@@ -166,10 +154,10 @@ func (g *generator) generateService(s pgs.Service) {
 		g.LineBreak()
 		if m.ServerStreaming() {
 			g.Linef(`public %s(req?: I%s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), input, output)
-			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(req)));`, g.fullName(m), input)
+			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(req)), %s);`, g.fullName(m), input, output)
 		} else {
 			g.Linef(`public %s(req?: I%s, opts?: strims_rpc_UnaryCallOptions): Promise<%s> {`, m.Name().LowerCamelCase(), input, output)
-			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(req)), opts);`, g.fullName(m), input)
+			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(req)), %s, opts);`, g.fullName(m), input, output)
 		}
 		g.Line(`}`)
 	}
