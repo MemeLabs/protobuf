@@ -119,8 +119,6 @@ func (c *CallIn) Argument(arg proto.Message) error {
 }
 
 func (c *CallIn) sendResponse(kind pb.Call_Kind, res proto.Message) error {
-	// c.responseKind = kind
-
 	id := atomic.AddUint64(nextID, 1)
 	if err := send(c.ctx, id, c.req.Id, callbackMethod, kind, res, c.send); err != nil {
 		return err
@@ -129,16 +127,19 @@ func (c *CallIn) sendResponse(kind pb.Call_Kind, res proto.Message) error {
 }
 
 func (c *CallIn) returnUndefined() {
+	c.responseType = ResponseTypeUndefined
 	c.sendResponse(pb.Call_CALL_KIND_UNDEFINED, &pb.Undefined{})
 	c.cancel()
 }
 
 func (c *CallIn) returnError(err error) {
+	c.responseType = ResponseTypeError
 	c.sendResponse(pb.Call_CALL_KIND_ERROR, &pb.Error{Message: err.Error()})
 	c.cancel()
 }
 
 func (c *CallIn) returnValue(v proto.Message) {
+	c.responseType = ResponseTypeValue
 	c.sendResponse(pb.Call_CALL_KIND_DEFAULT, v)
 	c.cancel()
 }
