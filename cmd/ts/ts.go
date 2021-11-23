@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/MemeLabs/protobuf/pkg/pgsutil"
@@ -68,6 +69,17 @@ func (g *generator) generateFile(f pgs.File) {
 	}
 }
 
+type importSet struct {
+	set      map[string]struct{}
+	entities []pgs.Entity
+}
+
+type pgsEntitySlice []pgs.Entity
+
+func (s pgsEntitySlice) Len() int           { return len(s) }
+func (s pgsEntitySlice) Less(i, j int) bool { return s[i].Name() < s[j].Name() }
+func (s pgsEntitySlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
 func (g *generator) generateImports(f pgs.File) {
 	root := g.runtimePath + "/lib/"
 	if g.runtimePath == "self" {
@@ -78,7 +90,7 @@ func (g *generator) generateImports(f pgs.File) {
 	g.Linef(`import Writer from "%spb/writer";`, root)
 	g.LineBreak()
 
-	imports := map[string]map[string]pgs.Entity{}
+	imports := map[string]*importSet{}
 	for _, m := range f.AllMessages() {
 	EachField:
 		for _, f := range m.Fields() {
@@ -95,14 +107,21 @@ func (g *generator) generateImports(f pgs.File) {
 			fk := e.File().InputPath().String()
 			ek := e.FullyQualifiedName()
 			if _, ok := imports[fk]; !ok {
-				imports[fk] = map[string]pgs.Entity{}
+				imports[fk] = &importSet{set: map[string]struct{}{}}
 			}
-			imports[fk][ek] = e
+			set := imports[fk]
+			if _, ok := set.set[ek]; !ok {
+				set.set[ek] = struct{}{}
+				set.entities = append(set.entities, e)
+			}
 		}
 	}
 	for _, i := range f.Imports() {
+		entities := imports[i.InputPath().String()].entities
+		sort.Sort(pgsEntitySlice(entities))
+
 		g.Line(`import {`)
-		for _, t := range imports[i.InputPath().String()] {
+		for _, t := range entities {
 			g.Linef(
 				"%s as %s,",
 				strings.TrimPrefix(strings.TrimPrefix(t.FullyQualifiedName(), i.FullyQualifiedName()), "."),
@@ -209,9 +228,9 @@ func (g *generator) generateMessage(m pgs.Message) {
 			}
 		} else if f.Type().IsMap() {
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`if (v?.%s) this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s.entries()) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, name, g.fieldInfo(f).tsBaseType)
+				g.Linef(`if (v?.%s) this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, name, g.fieldInfo(f).tsBaseType)
 			} else {
-				g.Linef(`if (v?.%s) this.%s = v.%s instanceof Map ? v.%s : new Map(Object.entries(v.%s));`, name, name, name, name, name)
+				g.Linef(`if (v?.%s) this.%s = new Map(v.%s instanceof Map ? v.%s : Object.entries(v.%s));`, name, name, name, name, name)
 			}
 			g.Linef(`else this.%s = %s;`, name, fi.zeroValue)
 		} else if f.Type().IsEmbed() {

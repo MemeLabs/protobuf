@@ -85,7 +85,10 @@ export default class Host {
       objectMode: true,
     });
 
-    e.on("close", () => this.call("CANCEL", new Cancel(), Call.Kind.CALL_KIND_CANCEL, call.id));
+    const handleClose = () => {
+      this.call("CANCEL", new Cancel(), Call.Kind.CALL_KIND_CANCEL, call.id);
+    };
+    e.on("close", handleClose);
 
     this.callbacks.set(call.id, (res: Call) => {
       switch (res.kind) {
@@ -97,7 +100,8 @@ export default class Host {
           break;
         case Call.Kind.CALL_KIND_CLOSE:
           this.callbacks.delete(call.id);
-          e.push(null);
+          e.off("close", handleClose);
+          e.end();
           break;
       }
     });
