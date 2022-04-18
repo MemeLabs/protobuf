@@ -137,6 +137,7 @@ func (g *generator) generateImports(f pgs.File) {
 		}
 
 		iparts := strings.Split(strings.TrimPrefix(i.FullyQualifiedName(), "."), ".")
+		iparts = append(iparts, i.File().InputPath().BaseName())
 		fparts := strings.Split(strings.TrimPrefix(f.FullyQualifiedName(), "."), ".")
 
 		l := len(iparts)
@@ -157,11 +158,7 @@ func (g *generator) generateImports(f pgs.File) {
 			prefix = strings.Repeat("../", uniquePrefixLength)
 		}
 
-		g.Linef(`} from "%s%s/%s";`,
-			prefix,
-			strings.Join(iparts[commonPrefixLength:], "/"),
-			i.File().InputPath().BaseName(),
-		)
+		g.Linef(`} from "%s";`, prefix+strings.Join(iparts[commonPrefixLength:], "/"))
 	}
 	g.LineBreak()
 }
