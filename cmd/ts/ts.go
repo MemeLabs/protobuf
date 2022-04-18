@@ -268,6 +268,8 @@ func (g *generator) generateMessage(m pgs.Message) {
 		} else {
 			if f.Type().IsEmbed() {
 				g.Linef(`if (m.%s) %s.encode(m.%s, w.uint32(%d).fork()).ldelim();`, name, fi.tsType, name, wireKey|fi.wireType)
+			} else if !g.isPrimitiveNumeric(f.Type().ProtoType()) {
+				g.Linef(`if (m.%s.length) w.uint32(%d).%s(m.%s);`, name, wireKey|fi.wireType, fi.codecFunc, name)
 			} else {
 				g.Linef(`if (m.%s) w.uint32(%d).%s(m.%s);`, name, wireKey|fi.wireType, fi.codecFunc, name)
 			}
