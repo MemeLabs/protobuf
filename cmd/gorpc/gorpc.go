@@ -81,6 +81,19 @@ type {{$svcName}}Service interface {
   ) ({{if .ServerStreaming}}<-chan {{end}}*{{.Output.Name.UpperCamelCase}}, error)
 {{end}}}
 
+// {{$svcName}}Service ...
+type Unimplemented{{$svcName}}Service struct {}
+{{range .Methods}}
+func (s *Unimplemented{{$svcName}}Service) {{.Name.UpperCamelCase}} (
+	  ctx context.Context,
+	  req *{{.Input.Name.UpperCamelCase}},
+  ) ({{if .ServerStreaming}}<-chan {{end}}*{{.Output.Name.UpperCamelCase}}, error) {
+	return nil, rpc.ErrNotImplemented
+}
+{{end}}
+
+var _ {{$svcName}}Service = (*Unimplemented{{$svcName}}Service)(nil)
+
 // {{$svcName}}Client ...
 type {{$svcName}}Client struct {
 	client rpc.Caller

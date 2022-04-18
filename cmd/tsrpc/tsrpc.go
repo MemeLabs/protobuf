@@ -136,6 +136,21 @@ func (g *generator) generateService(s pgs.Service) {
 	g.Line(`}`)
 	g.LineBreak()
 
+	g.Linef(`export class Unimplemented%[1]sService implements %[1]sService {`, s.Name().UpperCamelCase())
+	for _, m := range s.Methods() {
+		input := m.Input().Name().String()
+		output := m.Output().Name().UpperCamelCase().String()
+		if m.ServerStreaming() {
+			output = fmt.Sprintf("GenericReadable<%s>", output)
+		} else {
+			output = fmt.Sprintf("Promise<%[1]s> | %[1]s", output)
+		}
+
+		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s { throw new Error("not implemented"); }`, m.Name().LowerCamelCase(), input, output)
+	}
+	g.Line(`}`)
+	g.LineBreak()
+
 	g.Linef(`export const register%[1]sService = (host: strims_rpc_Service, service: %[1]sService): void => {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
 		input := m.Input().Name().String()
