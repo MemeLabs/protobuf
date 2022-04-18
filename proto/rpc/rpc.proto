@@ -25,6 +25,7 @@ message Call {
 
 message Error {
   string message = 1;
+  int32 code = 2;
 }
 
 message Cancel {}

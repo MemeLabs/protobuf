@@ -134,7 +134,10 @@ func (c *CallIn) returnUndefined() {
 
 func (c *CallIn) returnError(err error) {
 	c.responseType = ResponseTypeError
-	c.sendResponse(pb.Call_CALL_KIND_ERROR, &pb.Error{Message: err.Error()})
+	c.sendResponse(pb.Call_CALL_KIND_ERROR, &pb.Error{
+		Message: err.Error(),
+		Code:    ErrorCode(err),
+	})
 	c.cancel()
 }
 

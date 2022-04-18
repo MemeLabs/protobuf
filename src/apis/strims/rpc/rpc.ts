@@ -25,7 +25,7 @@ export class Call {
     this.method = v?.method || "";
     this.kind = v?.kind || 0;
     this.argument = v?.argument || new Uint8Array();
-    if (v?.headers) this.headers = v.headers instanceof Map ? v.headers : new Map(Object.entries(v.headers));
+    if (v?.headers) this.headers = new Map(v.headers instanceof Map ? v.headers : Object.entries(v.headers));
     else this.headers = new Map<string, Uint8Array>();
   }
 
@@ -33,9 +33,9 @@ export class Call {
     if (!w) w = new Writer();
     if (m.id) w.uint32(8).uint64(m.id);
     if (m.parentId) w.uint32(16).uint64(m.parentId);
-    if (m.method) w.uint32(26).string(m.method);
+    if (m.method.length) w.uint32(26).string(m.method);
     if (m.kind) w.uint32(32).uint32(m.kind);
-    if (m.argument) w.uint32(42).bytes(m.argument);
+    if (m.argument.length) w.uint32(42).bytes(m.argument);
     for (const [k, v] of m.headers) w.uint32(50).fork().uint32(10).string(k).uint32(18).bytes(v).ldelim();
     return w;
   }
@@ -103,18 +103,22 @@ export namespace Call {
 
 export type IError = {
   message?: string;
+  code?: number;
 }
 
 export class Error {
   message: string;
+  code: number;
 
   constructor(v?: IError) {
     this.message = v?.message || "";
+    this.code = v?.code || 0;
   }
 
   static encode(m: Error, w?: Writer): Writer {
     if (!w) w = new Writer();
-    if (m.message) w.uint32(10).string(m.message);
+    if (m.message.length) w.uint32(10).string(m.message);
+    if (m.code) w.uint32(16).int32(m.code);
     return w;
   }
 
@@ -127,6 +131,9 @@ export class Error {
       switch (tag >> 3) {
         case 1:
         m.message = r.string();
+        break;
+        case 2:
+        m.code = r.int32();
         break;
         default:
         r.skipType(tag & 7);

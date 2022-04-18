@@ -51,7 +51,7 @@ func unmarshalResponse(kind pb.Call_Kind, b []byte, v proto.Message) error {
 		if err := proto.Unmarshal(b, ev); err != nil {
 			return err
 		}
-		return errors.New(ev.Message)
+		return ev
 	case pb.Call_CALL_KIND_CLOSE:
 		return ErrClose
 	default:

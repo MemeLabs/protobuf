@@ -127,8 +127,11 @@ export default class Host {
     if (method) {
       try {
         res = method.callback(method.reqType.decode(call.argument), call);
-      } catch ({ message }) {
-        res = new Error({ message: String(message) });
+      } catch ({ message, code }) {
+        res = new Error({
+          message: String(message),
+          code: code >>> 0,
+        });
       }
     } else {
       res = new Error({ message: `method not implemented: ${call.method}` });
@@ -139,8 +142,11 @@ export default class Host {
       res.on("close", () => this.call("CALLBACK", new Close(), Call.Kind.CALL_KIND_CLOSE, call.id));
     } else if (res instanceof Promise) {
       void res.then((v) => this.call("CALLBACK", v, Call.Kind.CALL_KIND_DEFAULT, call.id));
-      res.catch(({ message }) => {
-        const e = new Error({ message: String(message) });
+      res.catch(({ message, code }) => {
+        const e = new Error({
+          message: String(message),
+          code: code >>> 0,
+        });
         this.call("CALLBACK", e, Call.Kind.CALL_KIND_ERROR, call.id);
       });
     } else if (res instanceof Error) {
