@@ -95,13 +95,24 @@ func (g *generator) generateImports(f pgs.File) {
 	EachField:
 		for _, f := range m.Fields() {
 			var e pgs.Entity
-			switch {
-			case f.Type().IsEmbed():
-				e = f.Type().Embed()
-			case f.Type().IsEnum():
-				e = f.Type().Enum()
-			default:
-				continue EachField
+			if f.Type().IsRepeated() || f.Type().IsMap() {
+				switch {
+				case f.Type().Element().IsEmbed():
+					e = f.Type().Element().Embed()
+				case f.Type().Element().IsEnum():
+					e = f.Type().Element().Enum()
+				default:
+					continue EachField
+				}
+			} else {
+				switch {
+				case f.Type().IsEmbed():
+					e = f.Type().Embed()
+				case f.Type().IsEnum():
+					e = f.Type().Enum()
+				default:
+					continue EachField
+				}
 			}
 
 			fk := e.File().InputPath().String()

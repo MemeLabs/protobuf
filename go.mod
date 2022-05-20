@@ -3,17 +3,16 @@ module github.com/MemeLabs/protobuf
 go 1.18
 
 require (
-	github.com/golang/protobuf v1.4.3
-	github.com/lyft/protoc-gen-star v0.5.2
+	github.com/golang/protobuf v1.5.2
+	github.com/lyft/protoc-gen-star v0.6.0
 	github.com/prometheus/client_golang v1.9.0
 	go.uber.org/zap v1.16.0
-	google.golang.org/protobuf v1.25.0
+	google.golang.org/protobuf v1.26.0
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
-	github.com/google/go-cmp v0.5.4 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.15.0 // indirect
