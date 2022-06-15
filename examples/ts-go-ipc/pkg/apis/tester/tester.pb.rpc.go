@@ -24,6 +24,25 @@ type TesterService interface {
 	) (<-chan *StreamResponse, error)
 }
 
+// TesterService ...
+type UnimplementedTesterService struct{}
+
+func (s *UnimplementedTesterService) Unary(
+	ctx context.Context,
+	req *UnaryRequest,
+) (*UnaryResponse, error) {
+	return nil, rpc.ErrNotImplemented
+}
+
+func (s *UnimplementedTesterService) Stream(
+	ctx context.Context,
+	req *StreamRequest,
+) (<-chan *StreamResponse, error) {
+	return nil, rpc.ErrNotImplemented
+}
+
+var _ TesterService = (*UnimplementedTesterService)(nil)
+
 // TesterClient ...
 type TesterClient struct {
 	client rpc.Caller

@@ -13,6 +13,10 @@ message TestMessage {
     TEST_ENUM_VAL_2 = 2;
   }
 
+  message EmbeddedMessage {
+    int32 embedded_value = 1;
+  }
+
   int32 int32_value = 1;
   int64 int64_value = 2;
   uint32 uint32_value = 3;
@@ -29,4 +33,26 @@ message TestMessage {
   fixed32 fixed32_value = 14;
   sfixed32 sfixed_value = 15;
   float float_value = 16;
+  EmbeddedMessage embedded_message_value = 17;
+  SiblingMessage sibling_message_value = 18;
+
+  map<string, int32> string_int32_map_value = 19;
+  map<string, int64> string_int64_map_value = 20;
+  map<string, string> string_string_map_value = 21;
+  map<string, EmbeddedMessage> string_embedded_message_map_value = 22;
+  map<int32, int32> int32_int32_map_value = 23;
+  map<int32, int64> int32_int64_map_value = 24;
+  map<int32, string> int32_string_map_value = 25;
+  map<int32, EmbeddedMessage> int32_embedded_message_map_value = 26;
+  map<int64, int32> int64_int32_map_value = 27;
+  map<int64, int64> int64_int64_map_value = 28;
+  map<int64, string> int64_string_map_value = 29;
+  map<int64, EmbeddedMessage> int64_embedded_message_map_value = 30;
+
+  repeated int32 repeated_int32_map_value = 31;
+  repeated int64 repeated_int64_map_value = 32;
+  repeated string repeated_string_map_value = 33;
+  repeated EmbeddedMessage repeated_embedded_message_map_value = 34;
 }
+
+message SiblingMessage {}

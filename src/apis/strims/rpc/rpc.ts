@@ -25,7 +25,7 @@ export class Call {
     this.method = v?.method || "";
     this.kind = v?.kind || 0;
     this.argument = v?.argument || new Uint8Array();
-    if (v?.headers) this.headers = new Map(v.headers instanceof Map ? v.headers : Object.entries(v.headers));
+    if (v?.headers) this.headers = new Map(v.headers instanceof Map ? v.headers : Object.entries(v.headers).map(([k, v]) => [String(k), v]));
     else this.headers = new Map<string, Uint8Array>();
   }
 
@@ -144,8 +144,7 @@ export class Error {
   }
 }
 
-export type ICancel = {
-}
+export type ICancel = Record<string, any>;
 
 export class Cancel {
 
@@ -164,8 +163,7 @@ export class Cancel {
   }
 }
 
-export type IUndefined = {
-}
+export type IUndefined = Record<string, any>;
 
 export class Undefined {
 
@@ -184,8 +182,7 @@ export class Undefined {
   }
 }
 
-export type IClose = {
-}
+export type IClose = Record<string, any>;
 
 export class Close {
 

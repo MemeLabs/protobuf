@@ -17,6 +17,11 @@ export interface RPCTestService {
   callStream(req: RPCCallStreamRequest, call: strims_rpc_Call): GenericReadable<RPCCallStreamResponse>;
 }
 
+export class UnimplementedRPCTestService implements RPCTestService {
+  callUnary(req: RPCCallUnaryRequest, call: strims_rpc_Call): Promise<RPCCallUnaryResponse> | RPCCallUnaryResponse { throw new Error("not implemented"); }
+  callStream(req: RPCCallStreamRequest, call: strims_rpc_Call): GenericReadable<RPCCallStreamResponse> { throw new Error("not implemented"); }
+}
+
 export const registerRPCTestService = (host: strims_rpc_Service, service: RPCTestService): void => {
   host.registerMethod<RPCCallUnaryRequest, RPCCallUnaryResponse>("strims.test.RPCTest.CallUnary", service.callUnary.bind(service), RPCCallUnaryRequest);
   host.registerMethod<RPCCallStreamRequest, RPCCallStreamResponse>("strims.test.RPCTest.CallStream", service.callStream.bind(service), RPCCallStreamRequest);

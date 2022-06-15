@@ -15,7 +15,7 @@ export class GreetRequest {
 
   static encode(m: GreetRequest, w?: Writer): Writer {
     if (!w) w = new Writer();
-    if (m.name) w.uint32(10).string(m.name);
+    if (m.name.length) w.uint32(10).string(m.name);
     return w;
   }
 
@@ -51,7 +51,7 @@ export class GreetResponse {
 
   static encode(m: GreetResponse, w?: Writer): Writer {
     if (!w) w = new Writer();
-    if (m.greeting) w.uint32(10).string(m.greeting);
+    if (m.greeting.length) w.uint32(10).string(m.greeting);
     return w;
   }
 

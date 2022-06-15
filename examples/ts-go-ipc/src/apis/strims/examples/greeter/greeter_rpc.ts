@@ -12,6 +12,10 @@ export interface GreeterService {
   greet(req: GreetRequest, call: strims_rpc_Call): Promise<GreetResponse> | GreetResponse;
 }
 
+export class UnimplementedGreeterService implements GreeterService {
+  greet(req: GreetRequest, call: strims_rpc_Call): Promise<GreetResponse> | GreetResponse { throw new Error("not implemented"); }
+}
+
 export const registerGreeterService = (host: strims_rpc_Service, service: GreeterService): void => {
   host.registerMethod<GreetRequest, GreetResponse>("strims.examples.greeter.Greeter.Greet", service.greet.bind(service), GreetRequest);
 }

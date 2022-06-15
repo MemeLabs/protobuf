@@ -19,6 +19,18 @@ type GreeterService interface {
 	) (*GreetResponse, error)
 }
 
+// GreeterService ...
+type UnimplementedGreeterService struct{}
+
+func (s *UnimplementedGreeterService) Greet(
+	ctx context.Context,
+	req *GreetRequest,
+) (*GreetResponse, error) {
+	return nil, rpc.ErrNotImplemented
+}
+
+var _ GreeterService = (*UnimplementedGreeterService)(nil)
+
 // GreeterClient ...
 type GreeterClient struct {
 	client rpc.Caller

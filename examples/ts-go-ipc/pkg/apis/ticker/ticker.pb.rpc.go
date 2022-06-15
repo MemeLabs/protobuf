@@ -19,6 +19,18 @@ type TickerService interface {
 	) (<-chan *TickResponse, error)
 }
 
+// TickerService ...
+type UnimplementedTickerService struct{}
+
+func (s *UnimplementedTickerService) Tick(
+	ctx context.Context,
+	req *TickRequest,
+) (<-chan *TickResponse, error) {
+	return nil, rpc.ErrNotImplemented
+}
+
+var _ TickerService = (*UnimplementedTickerService)(nil)
+
 // TickerClient ...
 type TickerClient struct {
 	client rpc.Caller

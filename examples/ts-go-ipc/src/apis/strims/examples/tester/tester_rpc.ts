@@ -17,6 +17,11 @@ export interface TesterService {
   stream(req: StreamRequest, call: strims_rpc_Call): GenericReadable<StreamResponse>;
 }
 
+export class UnimplementedTesterService implements TesterService {
+  unary(req: UnaryRequest, call: strims_rpc_Call): Promise<UnaryResponse> | UnaryResponse { throw new Error("not implemented"); }
+  stream(req: StreamRequest, call: strims_rpc_Call): GenericReadable<StreamResponse> { throw new Error("not implemented"); }
+}
+
 export const registerTesterService = (host: strims_rpc_Service, service: TesterService): void => {
   host.registerMethod<UnaryRequest, UnaryResponse>("strims.examples.tester.Tester.Unary", service.unary.bind(service), UnaryRequest);
   host.registerMethod<StreamRequest, StreamResponse>("strims.examples.tester.Tester.Stream", service.stream.bind(service), StreamRequest);

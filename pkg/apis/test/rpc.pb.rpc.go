@@ -24,6 +24,25 @@ type RPCTestService interface {
 	) (<-chan *RPCCallStreamResponse, error)
 }
 
+// RPCTestService ...
+type UnimplementedRPCTestService struct{}
+
+func (s *UnimplementedRPCTestService) CallUnary(
+	ctx context.Context,
+	req *RPCCallUnaryRequest,
+) (*RPCCallUnaryResponse, error) {
+	return nil, rpc.ErrNotImplemented
+}
+
+func (s *UnimplementedRPCTestService) CallStream(
+	ctx context.Context,
+	req *RPCCallStreamRequest,
+) (<-chan *RPCCallStreamResponse, error) {
+	return nil, rpc.ErrNotImplemented
+}
+
+var _ RPCTestService = (*UnimplementedRPCTestService)(nil)
+
 // RPCTestClient ...
 type RPCTestClient struct {
 	client rpc.Caller

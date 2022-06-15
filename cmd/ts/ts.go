@@ -194,14 +194,18 @@ func (g *generator) generateMessage(m pgs.Message) {
 	className := m.Name().UpperCamelCase()
 
 	// constructor argument interface
-	g.Linef(`export type I%s = {`, className)
-	for _, f := range m.NonOneOfFields() {
-		g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsIfType)
+	if len(m.Fields()) == 0 {
+		g.Linef(`export type I%s = Record<string, any>;`, className)
+	} else {
+		g.Linef(`export type I%s = {`, className)
+		for _, f := range m.NonOneOfFields() {
+			g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsIfType)
+		}
+		for _, o := range m.OneOfs() {
+			g.Linef(`%s?: %s`, o.Name().LowerCamelCase(), g.oneOfNameWithPrefix(o, "I"))
+		}
+		g.Line(`}`)
 	}
-	for _, o := range m.OneOfs() {
-		g.Linef(`%s?: %s`, o.Name().LowerCamelCase(), g.oneOfNameWithPrefix(o, "I"))
-	}
-	g.Line(`}`)
 	g.LineBreak()
 
 	g.Linef(`export class %s {`, className)
@@ -230,15 +234,20 @@ func (g *generator) generateMessage(m pgs.Message) {
 		fi := g.fieldInfo(f)
 		if f.Type().IsRepeated() {
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`this.%s = v?.%s ? v.%s.map(v => new %s(v)) : [];`, name, name, name, g.fieldInfo(f).tsBaseType)
+				g.Linef(`this.%s = v?.%s ? v.%s.map(v => new %s(v)) : [];`, name, name, name, fi.tsConstructor)
 			} else {
 				g.Linef(`this.%s = v?.%s ? v.%s : [];`, name, name, name)
 			}
 		} else if f.Type().IsMap() {
-			if f.Type().Element().IsEmbed() {
-				g.Linef(`if (v?.%s) this.%s = new Map((v.%s instanceof Map ? Array.from(v.%s) : Object.entries(v.%s)).map(([k, v]) => [k, new %s(v)]));`, name, name, name, name, name, g.fieldInfo(f).tsBaseType)
+			ki, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
+			if f.Type().Element().IsEmbed() && ki.isPropName {
+				g.Linef(`if (v?.%s) this.%s = new Map(v.%s instanceof Map ? Array.from(v.%s).map(([k, v]) => [k, new %s(v)]) : Object.entries(v.%s).map(([k, v]) => [%s(k), new %s(v)]));`, name, name, name, name, fi.tsConstructor, name, ki.tsConstructor, fi.tsConstructor)
+			} else if f.Type().Element().IsEmbed() {
+				g.Linef(`if (v?.%s) this.%s = new Map(Array.from(v.%s).map(([k, v]) => [k, new %s(v)]));`, name, name, name, fi.tsConstructor)
+			} else if ki.isPropName {
+				g.Linef(`if (v?.%s) this.%s = new Map(v.%s instanceof Map ? v.%s : Object.entries(v.%s).map(([k, v]) => [%s(k), v]));`, name, name, name, name, name, ki.tsConstructor)
 			} else {
-				g.Linef(`if (v?.%s) this.%s = new Map(v.%s instanceof Map ? v.%s : Object.entries(v.%s));`, name, name, name, name, name)
+				g.Linef(`if (v?.%s) this.%s = new Map(v.%s);`, name, name, name)
 			}
 			g.Linef(`else this.%s = %s;`, name, fi.zeroValue)
 		} else if f.Type().IsEmbed() {
@@ -263,7 +272,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 		wireKey := int(f.Descriptor().GetNumber() << 3)
 		if f.Type().IsRepeated() {
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`for (const v of m.%s) %s.encode(v, w.uint32(%d).fork()).ldelim();`, name, fi.tsBaseType, wireKey|fi.wireType)
+				g.Linef(`for (const v of m.%s) %s.encode(v, w.uint32(%d).fork()).ldelim();`, name, fi.tsConstructor, wireKey|fi.wireType)
 			} else if g.isPrimitiveNumeric(f.Type().Element().ProtoType()) {
 				g.Linef(`m.%s.reduce((w, v) => w.%s(v), w.uint32(%d).fork()).ldelim();`, name, fi.codecFunc, wireKey|2)
 			} else {
@@ -272,7 +281,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 		} else if f.Type().IsMap() {
 			ki, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`for (const [k, v] of m.%s) %s.encode(v, w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).fork()).ldelim().ldelim();`, name, fi.tsBaseType, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|fi.wireType)
+				g.Linef(`for (const [k, v] of m.%s) %s.encode(v, w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).fork()).ldelim().ldelim();`, name, fi.tsConstructor, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|fi.wireType)
 			} else {
 				g.Linef(`for (const [k, v] of m.%s) w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).%s(v).ldelim();`, name, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|fi.wireType, fi.codecFunc)
 			}
@@ -325,7 +334,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 			fi := g.fieldInfo(f)
 			if f.Type().IsRepeated() {
 				if f.Type().Element().IsEmbed() {
-					g.Linef(`m.%s.push(%s.decode(r, r.uint32()));`, name, fi.tsBaseType)
+					g.Linef(`m.%s.push(%s.decode(r, r.uint32()));`, name, fi.tsConstructor)
 				} else if g.isPrimitiveNumeric(f.Type().Element().ProtoType()) {
 					g.Linef(`for (const flen = r.uint32(), fend = r.pos + flen; r.pos < fend;) m.%s.push(r.%s());`, name, fi.codecFunc)
 				} else {
@@ -346,7 +355,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 				g.Line(`break;`)
 				g.Line(`case 2:`)
 				if f.Type().Element().IsEmbed() {
-					g.Linef(`value = %s.decode(r, r.uint32());`, fi.tsBaseType)
+					g.Linef(`value = %s.decode(r, r.uint32());`, fi.tsConstructor)
 				} else {
 					g.Linef(`value = r.%s();`, fi.codecFunc)
 				}
@@ -358,13 +367,13 @@ func (g *generator) generateMessage(m pgs.Message) {
 			} else if f.InOneOf() {
 				oneOfName := f.OneOf().Name().LowerCamelCase()
 				if f.Type().IsEmbed() {
-					g.Linef(`m.%s = new %s({ %s: %s.decode(r, r.uint32()) });`, oneOfName, g.oneOfName(f.OneOf()), name, fi.tsBaseType)
+					g.Linef(`m.%s = new %s({ %s: %s.decode(r, r.uint32()) });`, oneOfName, g.oneOfName(f.OneOf()), name, fi.tsConstructor)
 				} else {
 					g.Linef(`m.%s = new %s({ %s: r.%s() });`, oneOfName, g.oneOfName(f.OneOf()), name, fi.codecFunc)
 				}
 			} else {
 				if f.Type().IsEmbed() {
-					g.Linef(`m.%s = %s.decode(r, r.uint32());`, name, fi.tsBaseType)
+					g.Linef(`m.%s = %s.decode(r, r.uint32());`, name, fi.tsConstructor)
 				} else {
 					g.Linef(`m.%s = r.%s();`, name, fi.codecFunc)
 				}
@@ -490,12 +499,14 @@ func (g *generator) generateEnum(e pgs.Enum) {
 }
 
 type fieldInfo struct {
-	tsType     string
-	tsIfType   string
-	tsBaseType string
-	codecFunc  string
-	zeroValue  string
-	wireType   int
+	tsType        string
+	tsIfType      string
+	tsBaseType    string
+	tsConstructor string
+	isPropName    bool
+	codecFunc     string
+	zeroValue     string
+	wireType      int
 }
 
 const (
@@ -563,35 +574,35 @@ func (g *generator) isPrimitiveNumeric(p pgs.ProtoType) bool {
 func (g *generator) scalarFieldInfo(p pgs.ProtoType) (fieldInfo, bool) {
 	switch p {
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_DOUBLE):
-		return fieldInfo{"number", "number", "number", "double", "0", wireType64Bit}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "double", "0", wireType64Bit}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_FLOAT):
-		return fieldInfo{"number", "number", "number", "float", "0", wireType32Bit}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "float", "0", wireType32Bit}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_INT64):
-		return fieldInfo{"bigint", "bigint", "BigInt", "int64", "BigInt(0)", wireTypeVarint}, true
+		return fieldInfo{"bigint", "bigint", "bigint", "BigInt", false, "int64", "BigInt(0)", wireTypeVarint}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_UINT64):
-		return fieldInfo{"bigint", "bigint", "BigInt", "uint64", "BigInt(0)", wireTypeVarint}, true
+		return fieldInfo{"bigint", "bigint", "bigint", "BigInt", false, "uint64", "BigInt(0)", wireTypeVarint}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_INT32):
-		return fieldInfo{"number", "number", "number", "int32", "0", wireTypeVarint}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "int32", "0", wireTypeVarint}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_UINT32):
-		return fieldInfo{"number", "number", "number", "uint32", "0", wireTypeVarint}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "uint32", "0", wireTypeVarint}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_FIXED64):
-		return fieldInfo{"bigint", "bigint", "BigInt", "sfixed64", "BigInt(0)", wireType64Bit}, true
+		return fieldInfo{"bigint", "bigint", "bigint", "BigInt", false, "sfixed64", "BigInt(0)", wireType64Bit}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_FIXED32):
-		return fieldInfo{"number", "number", "number", "fixed32", "0", wireType32Bit}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "fixed32", "0", wireType32Bit}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_BOOL):
-		return fieldInfo{"boolean", "boolean", "boolean", "bool", "false", wireTypeVarint}, true
+		return fieldInfo{"boolean", "boolean", "boolean", "Boolean", false, "bool", "false", wireTypeVarint}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_STRING):
-		return fieldInfo{"string", "string", "string", "string", `""`, wireTypeLDelim}, true
+		return fieldInfo{"string", "string", "string", "String", true, "string", `""`, wireTypeLDelim}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_BYTES):
-		return fieldInfo{"Uint8Array", "Uint8Array", "Uint8Array", "bytes", "new Uint8Array()", wireTypeLDelim}, true
+		return fieldInfo{"Uint8Array", "Uint8Array", "Uint8Array", "Uint8Array", false, "bytes", "new Uint8Array()", wireTypeLDelim}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_SFIXED32):
-		return fieldInfo{"number", "number", "number", "sfixed32", "0", wireType32Bit}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "sfixed32", "0", wireType32Bit}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_SFIXED64):
-		return fieldInfo{"bigint", "bigint", "BigInt", "sfixed64", "BigInt(0)", wireType64Bit}, true
+		return fieldInfo{"bigint", "bigint", "bigint", "BigInt", false, "sfixed64", "BigInt(0)", wireType64Bit}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_SINT32):
-		return fieldInfo{"number", "number", "number", "sint32", "0", wireTypeVarint}, true
+		return fieldInfo{"number", "number", "number", "Number", true, "sint32", "0", wireTypeVarint}, true
 	case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_SINT64):
-		return fieldInfo{"bigint", "bigint", "BigInt", "sint64", "BigInt(0)", wireTypeVarint}, true
+		return fieldInfo{"bigint", "bigint", "bigint", "BigInt", false, "sint64", "BigInt(0)", wireTypeVarint}, true
 	default:
 		return fieldInfo{}, false
 	}
@@ -603,10 +614,10 @@ func (g *generator) fieldInfo(f pgs.Field) (t fieldInfo) {
 		switch f.Type().ProtoType() {
 		case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_MESSAGE):
 			tsType, tsIfType, codecFunc := g.entityName(f.Type(), f.Message())
-			t = fieldInfo{tsType, tsIfType, tsType, codecFunc, "new " + tsType + "()", wireTypeLDelim}
+			t = fieldInfo{tsType, tsIfType, tsType, tsType, false, codecFunc, "new " + tsType + "()", wireTypeLDelim}
 		case pgs.ProtoType(descriptor.FieldDescriptorProto_TYPE_ENUM):
 			tsType, tsIfType, _ := g.entityName(f.Type(), f.Message())
-			t = fieldInfo{tsType, tsIfType, tsType, "uint32", "0", wireTypeVarint}
+			t = fieldInfo{tsType, tsIfType, tsType, tsType, false, "uint32", "0", wireTypeVarint}
 		default:
 			log.Panicln("unknown type for", f.Name())
 		}
@@ -615,7 +626,11 @@ func (g *generator) fieldInfo(f pgs.Field) (t fieldInfo) {
 	if f.Type().IsMap() {
 		kt, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
 		t.tsType = fmt.Sprintf(`Map<%s, %s>`, kt.tsType, t.tsType)
-		t.tsIfType = fmt.Sprintf(`Map<%s, %s> | { [key: %s]: %s }`, kt.tsType, t.tsIfType, kt.tsType, t.tsIfType)
+		if kt.isPropName {
+			t.tsIfType = fmt.Sprintf(`Map<%s, %s> | { [key: %s]: %s }`, kt.tsType, t.tsIfType, kt.tsType, t.tsIfType)
+		} else {
+			t.tsIfType = t.tsType
+		}
 		t.zeroValue = fmt.Sprintf("new %s()", t.tsType)
 	} else if f.Type().IsRepeated() {
 		t.tsType = t.tsType + "[]"

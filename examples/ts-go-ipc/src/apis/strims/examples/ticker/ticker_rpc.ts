@@ -13,6 +13,10 @@ export interface TickerService {
   tick(req: TickRequest, call: strims_rpc_Call): GenericReadable<TickResponse>;
 }
 
+export class UnimplementedTickerService implements TickerService {
+  tick(req: TickRequest, call: strims_rpc_Call): GenericReadable<TickResponse> { throw new Error("not implemented"); }
+}
+
 export const registerTickerService = (host: strims_rpc_Service, service: TickerService): void => {
   host.registerMethod<TickRequest, TickResponse>("strims.examples.ticker.Ticker.Tick", service.tick.bind(service), TickRequest);
 }
