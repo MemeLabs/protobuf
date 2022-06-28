@@ -3,28 +3,28 @@ import strims_rpc_Service from "@memelabs/protobuf/lib/rpc/service";
 import { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc";
 
 import {
-  IGreetRequest,
-  GreetRequest,
-  GreetResponse,
+  strims_examples_greeter_IGreetRequest,
+  strims_examples_greeter_GreetRequest,
+  strims_examples_greeter_GreetResponse,
 } from "./greeter";
 
 export interface GreeterService {
-  greet(req: GreetRequest, call: strims_rpc_Call): Promise<GreetResponse> | GreetResponse;
+  greet(req: strims_examples_greeter_GreetRequest, call: strims_rpc_Call): Promise<strims_examples_greeter_GreetResponse> | strims_examples_greeter_GreetResponse;
 }
 
 export class UnimplementedGreeterService implements GreeterService {
-  greet(req: GreetRequest, call: strims_rpc_Call): Promise<GreetResponse> | GreetResponse { throw new Error("not implemented"); }
+  greet(req: strims_examples_greeter_GreetRequest, call: strims_rpc_Call): Promise<strims_examples_greeter_GreetResponse> | strims_examples_greeter_GreetResponse { throw new Error("not implemented"); }
 }
 
 export const registerGreeterService = (host: strims_rpc_Service, service: GreeterService): void => {
-  host.registerMethod<GreetRequest, GreetResponse>("strims.examples.greeter.Greeter.Greet", service.greet.bind(service), GreetRequest);
+  host.registerMethod<strims_examples_greeter_GreetRequest, strims_examples_greeter_GreetResponse>("strims.examples.greeter.Greeter.Greet", service.greet.bind(service), strims_examples_greeter_GreetRequest);
 }
 
 export class GreeterClient {
   constructor(private readonly host: strims_rpc_Host) {}
 
-  public greet(req?: IGreetRequest, opts?: strims_rpc_UnaryCallOptions): Promise<GreetResponse> {
-    return this.host.expectOne(this.host.call("strims.examples.greeter.Greeter.Greet", new GreetRequest(req)), GreetResponse, opts);
+  public greet(req?: strims_examples_greeter_IGreetRequest, opts?: strims_rpc_UnaryCallOptions): Promise<strims_examples_greeter_GreetResponse> {
+    return this.host.expectOne(this.host.call("strims.examples.greeter.Greeter.Greet", new strims_examples_greeter_GreetRequest(req)), strims_examples_greeter_GreetResponse, opts);
   }
 }
 

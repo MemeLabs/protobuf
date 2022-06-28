@@ -45,3 +45,9 @@ export class Timestamp {
   }
 }
 
+/* @internal */
+export const google_protobuf_Timestamp = Timestamp;
+/* @internal */
+export type google_protobuf_Timestamp = Timestamp;
+/* @internal */
+export type google_protobuf_ITimestamp = ITimestamp;

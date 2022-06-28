@@ -111,9 +111,9 @@ EachService:
 	g.Line(`import {`)
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
-			g.Linef(`I%s,`, m.Input().Name())
-			g.Linef(`%s,`, m.Input().Name())
-			g.Linef(`%s,`, m.Output().Name())
+			g.Linef(`%s,`, ts.IfFQN(m.Input()))
+			g.Linef(`%s,`, ts.FQN(m.Input()))
+			g.Linef(`%s,`, ts.FQN(m.Output()))
 		}
 	}
 	g.Linef(`} from "./%s";`, f.File().InputPath().BaseName())
@@ -123,39 +123,35 @@ EachService:
 func (g *generator) generateService(s pgs.Service) {
 	g.Linef(`export interface %sService {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
-		input := m.Input().Name().String()
-		output := m.Output().Name().UpperCamelCase().String()
+		output := ts.FQN(m.Output())
 		if m.ServerStreaming() {
 			output = fmt.Sprintf("GenericReadable<%s>", output)
 		} else {
 			output = fmt.Sprintf("Promise<%[1]s> | %[1]s", output)
 		}
 
-		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s;`, m.Name().LowerCamelCase(), input, output)
+		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s;`, m.Name().LowerCamelCase(), ts.FQN(m.Input()), output)
 	}
 	g.Line(`}`)
 	g.LineBreak()
 
 	g.Linef(`export class Unimplemented%[1]sService implements %[1]sService {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
-		input := m.Input().Name().String()
-		output := m.Output().Name().UpperCamelCase().String()
+		output := ts.FQN(m.Output())
 		if m.ServerStreaming() {
 			output = fmt.Sprintf("GenericReadable<%s>", output)
 		} else {
 			output = fmt.Sprintf("Promise<%[1]s> | %[1]s", output)
 		}
 
-		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s { throw new Error("not implemented"); }`, m.Name().LowerCamelCase(), input, output)
+		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s { throw new Error("not implemented"); }`, m.Name().LowerCamelCase(), ts.FQN(m.Input()), output)
 	}
 	g.Line(`}`)
 	g.LineBreak()
 
 	g.Linef(`export const register%[1]sService = (host: strims_rpc_Service, service: %[1]sService): void => {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
-		input := m.Input().Name().String()
-		output := m.Output().Name().UpperCamelCase().String()
-		g.Linef(`host.registerMethod<%s, %s>("%s", service.%s.bind(service), %s);`, input, output, g.fullName(m), m.Name().LowerCamelCase(), input)
+		g.Linef(`host.registerMethod<%s, %s>("%s", service.%s.bind(service), %s);`, ts.FQN(m.Input()), ts.FQN(m.Output()), g.fullName(m), m.Name().LowerCamelCase(), ts.FQN(m.Input()))
 	}
 	g.Line(`}`)
 	g.LineBreak()
@@ -163,16 +159,13 @@ func (g *generator) generateService(s pgs.Service) {
 	g.Linef(`export class %sClient {`, s.Name().UpperCamelCase())
 	g.Line(`constructor(private readonly host: strims_rpc_Host) {}`)
 	for _, m := range s.Methods() {
-		input := m.Input().Name().String()
-		output := m.Output().Name().UpperCamelCase().String()
-
 		g.LineBreak()
 		if m.ServerStreaming() {
-			g.Linef(`public %s(req?: I%s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), input, output)
-			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(req)), %s);`, g.fullName(m), input, output)
+			g.Linef(`public %s(req?: %s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), ts.IfFQN(m.Input()), ts.FQN(m.Output()))
+			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(req)), %s);`, g.fullName(m), ts.FQN(m.Input()), ts.FQN(m.Output()))
 		} else {
-			g.Linef(`public %s(req?: I%s, opts?: strims_rpc_UnaryCallOptions): Promise<%s> {`, m.Name().LowerCamelCase(), input, output)
-			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(req)), %s, opts);`, g.fullName(m), input, output)
+			g.Linef(`public %s(req?: %s, opts?: strims_rpc_UnaryCallOptions): Promise<%s> {`, m.Name().LowerCamelCase(), ts.IfFQN(m.Input()), ts.FQN(m.Output()))
+			g.Linef(`return this.host.expectOne(this.host.call("%s", new %s(req)), %s, opts);`, g.fullName(m), ts.FQN(m.Input()), ts.FQN(m.Output()))
 		}
 		g.Line(`}`)
 	}

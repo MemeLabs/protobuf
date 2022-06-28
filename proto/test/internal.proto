@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package strims.test.internal;
+
+option go_package = "github.com/MemeLabs/protobuf/pkg/apis/test/internal;internal";
+option java_package = "org.memelabs.protobuf.test.internal";
+option swift_prefix = "STI";
+
+message Foo {}
+
+message Bar {
+  message Foo {
+    strims.test.internal.Foo pkg_foo = 1;
+    Foo pkg_bar_foo2 = 2;
+
+    message Bar {
+      strims.test.internal.Foo pkg_foo = 1;
+      strims.test.internal.Bar.Foo pkg_bar_foo = 2;
+      Foo pkg_bar_foo2 = 3;
+      strims.test.internal.Bar.Foo.Bar pkg_bar_foo_bar = 4;
+      Bar pkg_bar_foo_bar2 = 5;
+    }
+  }
+
+  strims.test.internal.Foo pkg_foo = 1;
+  Foo pkg_bar_foo = 2;
+}

@@ -67,6 +67,12 @@ func (g *generator) generateFile(f pgs.File) {
 	for _, e := range f.Enums() {
 		g.generateEnum(e)
 	}
+	for _, m := range f.AllMessages() {
+		g.generateFullyQualifiedName(m)
+	}
+	for _, e := range f.AllEnums() {
+		g.generateFullyQualifiedName(e)
+	}
 }
 
 type importSet struct {
@@ -133,17 +139,9 @@ func (g *generator) generateImports(f pgs.File) {
 
 		g.Line(`import {`)
 		for _, t := range entities {
-			g.Linef(
-				"%s as %s,",
-				strings.TrimPrefix(strings.TrimPrefix(t.FullyQualifiedName(), i.FullyQualifiedName()), "."),
-				strings.ReplaceAll(strings.TrimPrefix(t.FullyQualifiedName(), "."), ".", "_"),
-			)
-			if e, ok := t.(pgs.Message); ok {
-				g.Linef(
-					"I%[1]s as %s_I%[1]s,",
-					e.Name().UpperCamelCase().String(),
-					strings.ReplaceAll(strings.TrimPrefix(e.File().FullyQualifiedName(), "."), ".", "_"),
-				)
+			g.Linef("%s,", ts.FQN(t))
+			if _, ok := t.(pgs.Message); ok {
+				g.Linef("%s,", ts.IfFQN(t))
 			}
 		}
 
@@ -498,6 +496,25 @@ func (g *generator) generateEnum(e pgs.Enum) {
 	g.Line(`}`)
 }
 
+func (g *generator) generateFullyQualifiedName(e pgs.Entity) {
+	fqn := ts.FQN(e)
+	name := strings.TrimPrefix(strings.TrimPrefix(e.FullyQualifiedName(), e.File().FullyQualifiedName()), ".")
+
+	g.Linef("/* @internal */")
+	g.Linef("export const %s = %s;", fqn, name)
+	g.Linef("/* @internal */")
+	g.Linef("export type %s = %s;", fqn, name)
+
+	if _, ok := e.(pgs.Message); ok {
+		ifFQN := ts.IfFQN(e)
+		i := strings.LastIndex(name, ".") + 1
+		ifName := fmt.Sprintf("%sI%s", name[:i], name[i:])
+
+		g.Linef("/* @internal */")
+		g.Linef("export type %s = %s;", ifFQN, ifName)
+	}
+}
+
 type fieldInfo struct {
 	tsType        string
 	tsIfType      string
@@ -518,8 +535,6 @@ const (
 
 // get the ts type name for the entity relative to m
 func (g *generator) entityName(f pgs.FieldType, m pgs.Message) (tsType, tsIfType, codecFunc string) {
-	ifPrefix := "I"
-
 	var e pgs.Entity
 	switch {
 	case f.IsEmbed():
@@ -530,7 +545,6 @@ func (g *generator) entityName(f pgs.FieldType, m pgs.Message) (tsType, tsIfType
 			e = f.Element().Embed()
 		case f.Element().IsEnum():
 			e = f.Element().Enum()
-			ifPrefix = ""
 		}
 	case f.IsMap():
 		el := f.Element()
@@ -540,20 +554,10 @@ func (g *generator) entityName(f pgs.FieldType, m pgs.Message) (tsType, tsIfType
 		e = el.Embed()
 	case f.IsEnum():
 		e = f.Enum()
-		ifPrefix = ""
 	}
 
-	if e.File() != m.File() {
-		prefix := strings.ReplaceAll(strings.TrimPrefix(e.File().FullyQualifiedName(), "."), ".", "_")
-		tsType = fmt.Sprintf("%s_%s", prefix, e.Name().UpperCamelCase().String())
-		tsIfType = fmt.Sprintf("%s_%s%s", prefix, ifPrefix, e.Name().UpperCamelCase().String())
-		return
-	}
-
-	tsType = strings.TrimPrefix(strings.TrimPrefix(e.FullyQualifiedName(), e.File().FullyQualifiedName()), ".")
-
-	i := strings.LastIndex(tsType, ".") + 1
-	tsIfType = fmt.Sprintf("%s%s%s", tsType[:i], ifPrefix, tsType[i:])
+	tsType = ts.FQN(e)
+	tsIfType = ts.IfFQN(e)
 
 	return
 }

@@ -6,6 +6,8 @@ option go_package = "github.com/MemeLabs/protobuf/pkg/apis/test;test";
 option java_package = "org.memelabs.protobuf.test";
 option swift_prefix = "STM";
 
+import "test/internal.proto";
+
 message TestMessage {
   enum TestEnum {
     TEST_ENUM_VAL_0 = 0;
@@ -56,3 +58,28 @@ message TestMessage {
 }
 
 message SiblingMessage {}
+
+message Foo {}
+
+message Bar {
+  message Foo {
+    strims.test.Foo test_foo = 1;
+    Foo test_bar_foo = 2;
+    strims.test.internal.Foo test_internal_foo = 3;
+
+    message Bar {
+      strims.test.Foo test_foo = 1;
+      strims.test.Bar.Foo test_bar_foo = 2;
+      Foo test_bar_foo2 = 3;
+      strims.test.Bar.Foo.Bar test_bar_foo_bar = 4;
+      Bar test_bar_foo_bar2 = 5;
+      strims.test.internal.Foo test_internal_foo = 6;
+      strims.test.internal.Bar.Foo test_internal_bar_foo = 7;
+      strims.test.internal.Bar.Foo.Bar test_internal_bar_foo_bar = 8;
+    }
+  }
+
+  strims.test.Foo test_foo = 1;
+  Foo test_bar_foo = 2;
+  strims.test.internal.Foo test_internal_foo = 3;
+}

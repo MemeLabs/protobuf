@@ -153,3 +153,27 @@ export class RPCCallStreamResponse {
   }
 }
 
+/* @internal */
+export const strims_test_RPCCallUnaryRequest = RPCCallUnaryRequest;
+/* @internal */
+export type strims_test_RPCCallUnaryRequest = RPCCallUnaryRequest;
+/* @internal */
+export type strims_test_IRPCCallUnaryRequest = IRPCCallUnaryRequest;
+/* @internal */
+export const strims_test_RPCCallUnaryResponse = RPCCallUnaryResponse;
+/* @internal */
+export type strims_test_RPCCallUnaryResponse = RPCCallUnaryResponse;
+/* @internal */
+export type strims_test_IRPCCallUnaryResponse = IRPCCallUnaryResponse;
+/* @internal */
+export const strims_test_RPCCallStreamRequest = RPCCallStreamRequest;
+/* @internal */
+export type strims_test_RPCCallStreamRequest = RPCCallStreamRequest;
+/* @internal */
+export type strims_test_IRPCCallStreamRequest = IRPCCallStreamRequest;
+/* @internal */
+export const strims_test_RPCCallStreamResponse = RPCCallStreamResponse;
+/* @internal */
+export type strims_test_RPCCallStreamResponse = RPCCallStreamResponse;
+/* @internal */
+export type strims_test_IRPCCallStreamResponse = IRPCCallStreamResponse;
