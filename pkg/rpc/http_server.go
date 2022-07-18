@@ -2,11 +2,13 @@ package rpc
 
 import (
 	"context"
-	"io/ioutil"
+	"encoding/binary"
+	"io"
 	"net/http"
 	"strconv"
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
+	"github.com/MemeLabs/protobuf/pkg/bytereader"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -24,8 +26,14 @@ type HTTPServer struct {
 }
 
 func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	b, err := ioutil.ReadAll(r.Body)
+	l, err := binary.ReadUvarint(bytereader.New(r.Body))
 	if err != nil {
+		httpServeError(http.StatusBadRequest, err, w)
+		return
+	}
+
+	b := make([]byte, l)
+	if _, err := io.ReadAtLeast(r.Body, b, int(l)); err != nil {
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}
@@ -36,12 +44,14 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(r.Context())
 	send := func(_ context.Context, res *pb.Call) error {
 		return httpServeProto(res, w)
 	}
-	call := NewCallIn(r.Context(), req, noopParentCallAccessor{}, send)
+	call := NewCallIn(ctx, req, noopParentCallAccessor{}, send)
 
-	s.ServiceDispatcher.Dispatch(call, func() {})
+	s.ServiceDispatcher.Dispatch(call, cancel)
+	<-ctx.Done()
 }
 
 func httpServeError(statusCode int, err error, w http.ResponseWriter) error {

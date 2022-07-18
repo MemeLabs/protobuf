@@ -96,6 +96,7 @@ func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 	method, ok := h.methods[call.Method()]
 	if !ok {
 		call.returnError(fmt.Errorf("method not found: %s", call.Method()))
+		done()
 		return
 	}
 
