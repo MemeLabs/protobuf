@@ -272,16 +272,17 @@ func (g *generator) generateMessage(m pgs.Message) {
 			if f.Type().Element().IsEmbed() {
 				g.Linef(`for (const v of m.%s) %s.encode(v, w.uint32(%d).fork()).ldelim();`, name, fi.tsConstructor, wireKey|fi.wireType)
 			} else if g.isPrimitiveNumeric(f.Type().Element().ProtoType()) {
-				g.Linef(`m.%s.reduce((w, v) => w.%s(v), w.uint32(%d).fork()).ldelim();`, name, fi.codecFunc, wireKey|2)
+				g.Linef(`m.%s.reduce((w, v) => w.%s(v), w.uint32(%d).fork()).ldelim();`, name, fi.codecFunc, wireKey|wireTypeLDelim)
 			} else {
 				g.Linef(`for (const v of m.%s) w.uint32(%d).%s(v);`, name, wireKey|fi.wireType, fi.codecFunc)
 			}
 		} else if f.Type().IsMap() {
 			ki, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
 			if f.Type().Element().IsEmbed() {
-				g.Linef(`for (const [k, v] of m.%s) %s.encode(v, w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).fork()).ldelim().ldelim();`, name, fi.tsConstructor, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|fi.wireType)
+				g.Linef(`for (const [k, v] of m.%s) %s.encode(v, w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).fork()).ldelim().ldelim();`, name, fi.tsConstructor, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|wireTypeLDelim)
 			} else {
-				g.Linef(`for (const [k, v] of m.%s) w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).%s(v).ldelim();`, name, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|fi.wireType, fi.codecFunc)
+				efi, _ := g.scalarFieldInfo(f.Type().Element().ProtoType())
+				g.Linef(`for (const [k, v] of m.%s) w.uint32(%d).fork().uint32(%d).%s(k).uint32(%d).%s(v).ldelim();`, name, wireKey|wireTypeLDelim, 1<<3|ki.wireType, ki.codecFunc, 2<<3|efi.wireType, efi.codecFunc)
 			}
 		} else {
 			if f.Type().IsEmbed() {
