@@ -93,9 +93,12 @@ func (g *generator) generateImports(f pgs.File) {
 		root = strings.Repeat("../", strings.Count(f.File().FullyQualifiedName(), ".")+1)
 	}
 
-	g.Linef(`import Reader from "%spb/reader";`, root)
-	g.Linef(`import Writer from "%spb/writer";`, root)
-	g.LineBreak()
+	// only messages encode and decode: a file of enums imports neither
+	if len(f.AllMessages()) != 0 {
+		g.Linef(`import Reader from "%spb/reader";`, root)
+		g.Linef(`import Writer from "%spb/writer";`, root)
+		g.LineBreak()
+	}
 
 	imports := map[string]*importSet{}
 	for _, m := range f.AllMessages() {
@@ -135,40 +138,22 @@ func (g *generator) generateImports(f pgs.File) {
 		}
 	}
 	for _, i := range f.Imports() {
-		entities := imports[i.InputPath().String()].entities
-		sort.Sort(pgsEntitySlice(entities))
+		set, ok := imports[i.InputPath().String()]
+		if !ok {
+			// no field uses its types: it's imported for a service's sake, or
+			// an option's
+			continue
+		}
+		sort.Sort(pgsEntitySlice(set.entities))
 
 		g.Line(`import {`)
-		for _, t := range entities {
+		for _, t := range set.entities {
 			g.Linef("%s,", ts.FQN(t))
 			if _, ok := t.(pgs.Message); ok {
 				g.Linef("%s,", ts.IfFQN(t))
 			}
 		}
-
-		iparts := strings.Split(strings.TrimPrefix(i.FullyQualifiedName(), "."), ".")
-		iparts = append(iparts, i.File().InputPath().BaseName())
-		fparts := strings.Split(strings.TrimPrefix(f.FullyQualifiedName(), "."), ".")
-
-		l := len(iparts)
-		if fl := len(fparts); fl < l {
-			l = fl
-		}
-
-		commonPrefixLength := 0
-		for i := 0; i < l; i++ {
-			if iparts[i] == fparts[i] {
-				commonPrefixLength++
-			} else {
-				break
-			}
-		}
-		prefix := "./"
-		if uniquePrefixLength := len(fparts) - commonPrefixLength; uniquePrefixLength != 0 {
-			prefix = strings.Repeat("../", uniquePrefixLength)
-		}
-
-		g.Linef(`} from "%s";`, prefix+strings.Join(iparts[commonPrefixLength:], "/"))
+		g.Linef(`} from "%s";`, ts.ImportPath(f, i))
 	}
 	g.LineBreak()
 }
@@ -230,10 +215,12 @@ func (g *generator) generateMessage(m pgs.Message) {
 	g.LineBreak()
 
 	// constructor
-	if len(m.Fields()) == 0 {
-		g.Line(`// eslint-disable-next-line @typescript-eslint/no-unused-vars`)
-	}
 	g.Linef(`constructor(v?: I%s) {`, className)
+	if len(m.Fields()) == 0 {
+		// uses v and fills the body, so neither no-unused-vars nor
+		// no-empty-function needs a directive, whichever a linter enables
+		g.Line(`void v; // an empty message has no fields to set`)
+	}
 	for _, f := range m.NonOneOfFields() {
 		name := g.fieldName(f)
 		fi := g.fieldInfo(f)
@@ -263,7 +250,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 	}
 	for _, o := range m.OneOfs() {
 		name := o.Name().LowerCamelCase()
-		g.Linef(`this.%s = new %s(v?.%s);`, name, g.oneOfName(o), name)
+		g.Linef(`this.%s = v?.%s ? new %s(v.%s) : new %s();`, name, name, g.oneOfName(o), name, g.oneOfName(o))
 	}
 	g.Line(`}`)
 	g.LineBreak()
@@ -351,13 +338,19 @@ func (g *generator) generateMessage(m pgs.Message) {
 				g.Line(`{`)
 				g.Line(`const flen = r.uint32();`)
 				g.Line(`const fend = r.pos + flen;`)
-				g.Linef(`let key: %s;`, ki.tsBaseType)
-				g.Linef(`let value: %s;`, fi.tsBaseType)
+				// an entry missing its key or value has the zero value there
+				g.Linef(`let key: %s = %s;`, ki.tsBaseType, ki.zeroValue)
+				if f.Type().Element().IsEmbed() {
+					g.Linef(`let value: %s | undefined;`, fi.tsBaseType)
+				} else {
+					efi, _ := g.scalarFieldInfo(f.Type().Element().ProtoType())
+					g.Linef(`let value: %s = %s;`, fi.tsBaseType, efi.zeroValue)
+				}
 				g.Line(`while (r.pos < fend) {`)
 				g.Line(`const ftag = r.uint32();`)
 				g.Line(`switch (ftag >> 3) {`)
 				g.Line(`case 1:`)
-				g.Linef(`key = r.%s()`, ki.codecFunc)
+				g.Linef(`key = r.%s();`, ki.codecFunc)
 				g.Line(`break;`)
 				g.Line(`case 2:`)
 				if f.Type().Element().IsEmbed() {
@@ -366,9 +359,16 @@ func (g *generator) generateMessage(m pgs.Message) {
 					g.Linef(`value = r.%s();`, fi.codecFunc)
 				}
 				g.Line(`break;`)
+				g.Line(`default:`)
+				g.Line(`r.skipType(ftag & 7);`)
+				g.Line(`break;`)
 				g.Line(`}`)
 				g.Line(`}`)
-				g.Linef(`m.%s.set(key, value)`, name)
+				if f.Type().Element().IsEmbed() {
+					g.Linef(`m.%s.set(key, value ?? new %s());`, name, fi.tsConstructor)
+				} else {
+					g.Linef(`m.%s.set(key, value);`, name)
+				}
 				g.Line(`}`)
 			} else if f.InOneOf() {
 				oneOfName := f.OneOf().Name().LowerCamelCase()
@@ -453,15 +453,10 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 
 	g.Linef(`class %sImpl {`, className)
 
-	// properties
+	// properties: only the case's is set
 	for _, f := range o.Fields() {
-		fi := g.fieldInfo(f)
 		g.Doc(f)
-		if f.Type().IsEmbed() {
-			g.Linef(`%s: %s;`, g.fieldName(f), fi.tsType)
-		} else {
-			g.Linef(`%s: %s;`, g.fieldName(f), fi.tsType)
-		}
+		g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsType)
 	}
 	g.Linef(`case: %s = %s.NOT_SET;`, caseName, caseName)
 	g.LineBreak()

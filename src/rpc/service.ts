@@ -8,7 +8,9 @@ export type Callback<Request, Response> = (
 ) => Response | Promise<Response> | GenericReadable<Response> | undefined;
 
 export interface Method<Request, Response> {
-  callback: Callback<Request, Response>;
+  // a method, whose parameters are bivariant, so a Method<Request, Response>
+  // is a Method<unknown, unknown>
+  callback(arg: Request, call: Call): ReturnType<Callback<Request, Response>>;
   reqType: MessageClass<Request>;
 }
 

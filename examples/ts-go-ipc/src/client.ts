@@ -22,12 +22,10 @@ void (async () => {
 
   const tickerClient = new TickerClient(client);
   const stream = tickerClient.tick({ times: 5 });
-  for await (const res of stream) {
-    console.log(
-      "tick",
-      res.index,
-      new Date(Number(res.time.seconds) * 1000 + res.time.nanos / 1000000)
-    );
+  for await (const { index, time } of stream) {
+    // an unset timestamp is the epoch
+    const ms = time ? Number(time.seconds) * 1000 + time.nanos / 1000000 : 0;
+    console.log("tick", index, new Date(ms));
   }
   console.log("done");
 

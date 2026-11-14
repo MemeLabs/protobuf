@@ -44,6 +44,9 @@ export default class Writer {
 
   ldelim(): Writer {
     const pos = this.offsets.pop();
+    if (pos === undefined) {
+      throw new Error("ldelim without a fork");
+    }
     const len = this.pos - pos - maxVarintLen32;
 
     this.pos = pos;

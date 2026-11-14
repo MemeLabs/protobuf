@@ -66,20 +66,23 @@ export class Call {
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: string;
-          let value: Uint8Array;
+          let key: string = "";
+          let value: Uint8Array = new Uint8Array();
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.string()
+              key = r.string();
               break;
               case 2:
               value = r.bytes();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.headers.set(key, value)
+          m.headers.set(key, value);
         }
         break;
         default:
@@ -148,8 +151,8 @@ export type ICancel = object;
 
 export class Cancel {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: ICancel) {
+    void v; // an empty message has no fields to set
   }
 
   static encode(m: Cancel, w?: Writer): Writer {
@@ -167,8 +170,8 @@ export type IUndefined = object;
 
 export class Undefined {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IUndefined) {
+    void v; // an empty message has no fields to set
   }
 
   static encode(m: Undefined, w?: Writer): Writer {
@@ -186,8 +189,8 @@ export type IClose = object;
 
 export class Close {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IClose) {
+    void v; // an empty message has no fields to set
   }
 
   static encode(m: Close, w?: Writer): Writer {

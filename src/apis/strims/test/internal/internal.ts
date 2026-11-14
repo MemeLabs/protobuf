@@ -6,8 +6,8 @@ export type IFoo = object;
 
 export class Foo {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IFoo) {
+    void v; // an empty message has no fields to set
   }
 
   static encode(m: Foo, w?: Writer): Writer {

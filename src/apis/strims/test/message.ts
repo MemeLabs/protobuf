@@ -236,240 +236,276 @@ export class TestMessage {
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: string;
-          let value: number;
+          let key: string = "";
+          let value: number = 0;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.string()
+              key = r.string();
               break;
               case 2:
               value = r.int32();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.stringInt32MapValue.set(key, value)
+          m.stringInt32MapValue.set(key, value);
         }
         break;
         case 20:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: string;
-          let value: bigint;
+          let key: string = "";
+          let value: bigint = BigInt(0);
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.string()
+              key = r.string();
               break;
               case 2:
               value = r.int64();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.stringInt64MapValue.set(key, value)
+          m.stringInt64MapValue.set(key, value);
         }
         break;
         case 21:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: string;
-          let value: string;
+          let key: string = "";
+          let value: string = "";
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.string()
+              key = r.string();
               break;
               case 2:
               value = r.string();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.stringStringMapValue.set(key, value)
+          m.stringStringMapValue.set(key, value);
         }
         break;
         case 22:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: string;
-          let value: strims_test_TestMessage_EmbeddedMessage;
+          let key: string = "";
+          let value: strims_test_TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.string()
+              key = r.string();
               break;
               case 2:
               value = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.stringEmbeddedMessageMapValue.set(key, value)
+          m.stringEmbeddedMessageMapValue.set(key, value ?? new strims_test_TestMessage_EmbeddedMessage());
         }
         break;
         case 23:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: number;
-          let value: number;
+          let key: number = 0;
+          let value: number = 0;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int32()
+              key = r.int32();
               break;
               case 2:
               value = r.int32();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int32Int32MapValue.set(key, value)
+          m.int32Int32MapValue.set(key, value);
         }
         break;
         case 24:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: number;
-          let value: bigint;
+          let key: number = 0;
+          let value: bigint = BigInt(0);
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int32()
+              key = r.int32();
               break;
               case 2:
               value = r.int64();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int32Int64MapValue.set(key, value)
+          m.int32Int64MapValue.set(key, value);
         }
         break;
         case 25:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: number;
-          let value: string;
+          let key: number = 0;
+          let value: string = "";
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int32()
+              key = r.int32();
               break;
               case 2:
               value = r.string();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int32StringMapValue.set(key, value)
+          m.int32StringMapValue.set(key, value);
         }
         break;
         case 26:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: number;
-          let value: strims_test_TestMessage_EmbeddedMessage;
+          let key: number = 0;
+          let value: strims_test_TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int32()
+              key = r.int32();
               break;
               case 2:
               value = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int32EmbeddedMessageMapValue.set(key, value)
+          m.int32EmbeddedMessageMapValue.set(key, value ?? new strims_test_TestMessage_EmbeddedMessage());
         }
         break;
         case 27:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: bigint;
-          let value: number;
+          let key: bigint = BigInt(0);
+          let value: number = 0;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int64()
+              key = r.int64();
               break;
               case 2:
               value = r.int32();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int64Int32MapValue.set(key, value)
+          m.int64Int32MapValue.set(key, value);
         }
         break;
         case 28:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: bigint;
-          let value: bigint;
+          let key: bigint = BigInt(0);
+          let value: bigint = BigInt(0);
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int64()
+              key = r.int64();
               break;
               case 2:
               value = r.int64();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int64Int64MapValue.set(key, value)
+          m.int64Int64MapValue.set(key, value);
         }
         break;
         case 29:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: bigint;
-          let value: string;
+          let key: bigint = BigInt(0);
+          let value: string = "";
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int64()
+              key = r.int64();
               break;
               case 2:
               value = r.string();
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int64StringMapValue.set(key, value)
+          m.int64StringMapValue.set(key, value);
         }
         break;
         case 30:
         {
           const flen = r.uint32();
           const fend = r.pos + flen;
-          let key: bigint;
-          let value: strims_test_TestMessage_EmbeddedMessage;
+          let key: bigint = BigInt(0);
+          let value: strims_test_TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
               case 1:
-              key = r.int64()
+              key = r.int64();
               break;
               case 2:
               value = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
+              default:
+              r.skipType(ftag & 7);
+              break;
             }
           }
-          m.int64EmbeddedMessageMapValue.set(key, value)
+          m.int64EmbeddedMessageMapValue.set(key, value ?? new strims_test_TestMessage_EmbeddedMessage());
         }
         break;
         case 31:
@@ -541,8 +577,8 @@ export type ISiblingMessage = object;
 
 export class SiblingMessage {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: ISiblingMessage) {
+    void v; // an empty message has no fields to set
   }
 
   static encode(m: SiblingMessage, w?: Writer): Writer {
@@ -560,8 +596,8 @@ export type IFoo = object;
 
 export class Foo {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IFoo) {
+    void v; // an empty message has no fields to set
   }
 
   static encode(m: Foo, w?: Writer): Writer {

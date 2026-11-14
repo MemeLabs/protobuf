@@ -109,15 +109,44 @@ EachService:
 
 	g.LineBreak()
 
-	g.Line(`import {`)
+	// the methods' types, each named once, grouped by the file declaring them
+	// in the order the methods first use them
+	type importGroup struct {
+		file  pgs.File
+		names []string
+	}
+	var groups []*importGroup
+	byFile := map[string]*importGroup{}
+	seen := map[string]bool{}
+	add := func(e pgs.Entity, name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		key := e.File().InputPath().String()
+		group, ok := byFile[key]
+		if !ok {
+			group = &importGroup{file: e.File()}
+			byFile[key] = group
+			groups = append(groups, group)
+		}
+		group.names = append(group.names, name)
+	}
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
-			g.Linef(`%s,`, ts.IfFQN(m.Input()))
-			g.Linef(`%s,`, ts.FQN(m.Input()))
-			g.Linef(`%s,`, ts.FQN(m.Output()))
+			add(m.Input(), ts.IfFQN(m.Input()))
+			add(m.Input(), ts.FQN(m.Input()))
+			add(m.Output(), ts.FQN(m.Output()))
 		}
 	}
-	g.Linef(`} from "./%s";`, f.File().InputPath().BaseName())
+
+	for _, group := range groups {
+		g.Line(`import {`)
+		for _, name := range group.names {
+			g.Linef(`%s,`, name)
+		}
+		g.Linef(`} from "%s";`, ts.ImportPath(f, group.file))
+	}
 	g.LineBreak()
 }
 
