@@ -14,11 +14,12 @@ export interface TickerService {
 }
 
 export class UnimplementedTickerService implements TickerService {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tick(req: strims_examples_ticker_TickRequest, call: strims_rpc_Call): GenericReadable<strims_examples_ticker_TickResponse> { throw new Error("not implemented"); }
 }
 
 export const registerTickerService = (host: strims_rpc_Service, service: TickerService): void => {
-  host.registerMethod<strims_examples_ticker_TickRequest, strims_examples_ticker_TickResponse>("strims.examples.ticker.Ticker.Tick", service.tick.bind(service), strims_examples_ticker_TickRequest);
+  host.registerMethod<strims_examples_ticker_TickRequest, strims_examples_ticker_TickResponse>("strims.examples.ticker.Ticker.Tick", (req, call) => service.tick(req, call), strims_examples_ticker_TickRequest);
 }
 
 export class TickerClient {

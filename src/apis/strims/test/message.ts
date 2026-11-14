@@ -152,16 +152,16 @@ export class TestMessage {
     if (m.floatValue) w.uint32(133).float(m.floatValue);
     if (m.embeddedMessageValue) strims_test_TestMessage_EmbeddedMessage.encode(m.embeddedMessageValue, w.uint32(138).fork()).ldelim();
     if (m.siblingMessageValue) strims_test_SiblingMessage.encode(m.siblingMessageValue, w.uint32(146).fork()).ldelim();
-    for (const [k, v] of m.stringInt32MapValue) w.uint32(154).fork().uint32(10).string(k).uint32(18).int32(v).ldelim();
-    for (const [k, v] of m.stringInt64MapValue) w.uint32(162).fork().uint32(10).string(k).uint32(18).int64(v).ldelim();
+    for (const [k, v] of m.stringInt32MapValue) w.uint32(154).fork().uint32(10).string(k).uint32(16).int32(v).ldelim();
+    for (const [k, v] of m.stringInt64MapValue) w.uint32(162).fork().uint32(10).string(k).uint32(16).int64(v).ldelim();
     for (const [k, v] of m.stringStringMapValue) w.uint32(170).fork().uint32(10).string(k).uint32(18).string(v).ldelim();
     for (const [k, v] of m.stringEmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(178).fork().uint32(10).string(k).uint32(18).fork()).ldelim().ldelim();
-    for (const [k, v] of m.int32Int32MapValue) w.uint32(186).fork().uint32(8).int32(k).uint32(18).int32(v).ldelim();
-    for (const [k, v] of m.int32Int64MapValue) w.uint32(194).fork().uint32(8).int32(k).uint32(18).int64(v).ldelim();
+    for (const [k, v] of m.int32Int32MapValue) w.uint32(186).fork().uint32(8).int32(k).uint32(16).int32(v).ldelim();
+    for (const [k, v] of m.int32Int64MapValue) w.uint32(194).fork().uint32(8).int32(k).uint32(16).int64(v).ldelim();
     for (const [k, v] of m.int32StringMapValue) w.uint32(202).fork().uint32(8).int32(k).uint32(18).string(v).ldelim();
     for (const [k, v] of m.int32EmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(210).fork().uint32(8).int32(k).uint32(18).fork()).ldelim().ldelim();
-    for (const [k, v] of m.int64Int32MapValue) w.uint32(218).fork().uint32(8).int64(k).uint32(18).int32(v).ldelim();
-    for (const [k, v] of m.int64Int64MapValue) w.uint32(226).fork().uint32(8).int64(k).uint32(18).int64(v).ldelim();
+    for (const [k, v] of m.int64Int32MapValue) w.uint32(218).fork().uint32(8).int64(k).uint32(16).int32(v).ldelim();
+    for (const [k, v] of m.int64Int64MapValue) w.uint32(226).fork().uint32(8).int64(k).uint32(16).int64(v).ldelim();
     for (const [k, v] of m.int64StringMapValue) w.uint32(234).fork().uint32(8).int64(k).uint32(18).string(v).ldelim();
     for (const [k, v] of m.int64EmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(242).fork().uint32(8).int64(k).uint32(18).fork()).ldelim().ldelim();
     m.repeatedInt32MapValue.reduce((w, v) => w.int32(v), w.uint32(250).fork()).ldelim();
@@ -537,11 +537,11 @@ export namespace TestMessage {
   }
 }
 
-export type ISiblingMessage = Record<string, any>;
+export type ISiblingMessage = object;
 
 export class SiblingMessage {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: ISiblingMessage) {
   }
 
@@ -556,11 +556,11 @@ export class SiblingMessage {
   }
 }
 
-export type IFoo = Record<string, any>;
+export type IFoo = object;
 
 export class Foo {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IFoo) {
   }
 

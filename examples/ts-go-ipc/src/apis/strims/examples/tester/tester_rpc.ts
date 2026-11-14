@@ -18,13 +18,15 @@ export interface TesterService {
 }
 
 export class UnimplementedTesterService implements TesterService {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   unary(req: strims_examples_tester_UnaryRequest, call: strims_rpc_Call): Promise<strims_examples_tester_UnaryResponse> | strims_examples_tester_UnaryResponse { throw new Error("not implemented"); }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   stream(req: strims_examples_tester_StreamRequest, call: strims_rpc_Call): GenericReadable<strims_examples_tester_StreamResponse> { throw new Error("not implemented"); }
 }
 
 export const registerTesterService = (host: strims_rpc_Service, service: TesterService): void => {
-  host.registerMethod<strims_examples_tester_UnaryRequest, strims_examples_tester_UnaryResponse>("strims.examples.tester.Tester.Unary", service.unary.bind(service), strims_examples_tester_UnaryRequest);
-  host.registerMethod<strims_examples_tester_StreamRequest, strims_examples_tester_StreamResponse>("strims.examples.tester.Tester.Stream", service.stream.bind(service), strims_examples_tester_StreamRequest);
+  host.registerMethod<strims_examples_tester_UnaryRequest, strims_examples_tester_UnaryResponse>("strims.examples.tester.Tester.Unary", (req, call) => service.unary(req, call), strims_examples_tester_UnaryRequest);
+  host.registerMethod<strims_examples_tester_StreamRequest, strims_examples_tester_StreamResponse>("strims.examples.tester.Tester.Stream", (req, call) => service.stream(req, call), strims_examples_tester_StreamRequest);
 }
 
 export class TesterClient {

@@ -59,6 +59,7 @@ type generator struct {
 }
 
 func (g *generator) generateFile(f pgs.File) {
+	g.Header(f)
 	g.generateImports(f)
 
 	for _, m := range f.Messages() {
@@ -192,25 +193,30 @@ func (g *generator) generateMessage(m pgs.Message) {
 	className := m.Name().UpperCamelCase()
 
 	// constructor argument interface
+	g.Doc(m)
 	if len(m.Fields()) == 0 {
-		g.Linef(`export type I%s = Record<string, any>;`, className)
+		g.Linef(`export type I%s = object;`, className)
 	} else {
 		g.Linef(`export type I%s = {`, className)
 		for _, f := range m.NonOneOfFields() {
+			g.Doc(f)
 			g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsIfType)
 		}
 		for _, o := range m.OneOfs() {
+			g.Doc(o)
 			g.Linef(`%s?: %s`, o.Name().LowerCamelCase(), g.oneOfNameWithPrefix(o, "I"))
 		}
 		g.Line(`}`)
 	}
 	g.LineBreak()
 
+	g.Doc(m)
 	g.Linef(`export class %s {`, className)
 
 	// properties
 	for _, f := range m.NonOneOfFields() {
 		fi := g.fieldInfo(f)
+		g.Doc(f)
 		if f.Type().IsEmbed() {
 			g.Linef(`%s: %s | undefined;`, g.fieldName(f), fi.tsType)
 		} else {
@@ -218,13 +224,14 @@ func (g *generator) generateMessage(m pgs.Message) {
 		}
 	}
 	for _, o := range m.OneOfs() {
+		g.Doc(o)
 		g.Linef(`%s: %s;`, o.Name().LowerCamelCase(), g.oneOfNameWithPrefix(o, "T"))
 	}
 	g.LineBreak()
 
 	// constructor
 	if len(m.Fields()) == 0 {
-		g.Line(`// eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function`)
+		g.Line(`// eslint-disable-next-line @typescript-eslint/no-unused-vars`)
 	}
 	g.Linef(`constructor(v?: I%s) {`, className)
 	for _, f := range m.NonOneOfFields() {
@@ -416,9 +423,11 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	className := fmt.Sprintf("%s", o.Name().UpperCamelCase())
 	caseName := fmt.Sprintf("%sCase", o.Name().UpperCamelCase())
 
+	g.Doc(o)
 	g.Linef(`export enum %s {`, caseName)
 	g.Line(`NOT_SET = 0,`)
 	for _, f := range o.Fields() {
+		g.Doc(f)
 		g.Linef(`%s = %d,`, f.Name().ScreamingSnakeCase(), f.Descriptor().GetNumber())
 	}
 	g.Line(`}`)
@@ -447,6 +456,7 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	// properties
 	for _, f := range o.Fields() {
 		fi := g.fieldInfo(f)
+		g.Doc(f)
 		if f.Type().IsEmbed() {
 			g.Linef(`%s: %s;`, g.fieldName(f), fi.tsType)
 		} else {
@@ -476,6 +486,7 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	g.Line(`}`)
 	g.LineBreak()
 
+	g.Doc(o)
 	g.Linef(`export const %s = %sImpl as {`, className, className)
 	g.Linef(`new (): Readonly<{ case: %s.NOT_SET }>;`, caseName)
 	g.Linef(`new <T extends I%s>(v: T): Readonly<`, className)
@@ -490,8 +501,10 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 }
 
 func (g *generator) generateEnum(e pgs.Enum) {
+	g.Doc(e)
 	g.Linef(`export enum %s {`, e.Name().UpperCamelCase())
 	for _, v := range e.Values() {
+		g.Doc(v)
 		g.Linef(`%s = %d,`, v.Name().ScreamingSnakeCase(), v.Value())
 	}
 	g.Line(`}`)

@@ -2,11 +2,11 @@ import Reader from "../../../../pb/reader";
 import Writer from "../../../../pb/writer";
 
 
-export type IFoo = Record<string, any>;
+export type IFoo = object;
 
 export class Foo {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IFoo) {
   }
 

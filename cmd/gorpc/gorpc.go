@@ -4,6 +4,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/MemeLabs/protobuf/pkg/pgsutil"
 	pgs "github.com/lyft/protoc-gen-star/v2"
 	pgsgo "github.com/lyft/protoc-gen-star/v2/lang/go"
 )
@@ -27,6 +28,8 @@ func (p *GoRPCModule) InitContext(c pgs.BuildContext) {
 		"package":  p.ctx.PackageName,
 		"name":     p.ctx.Name,
 		"fullName": p.fullName,
+		"header":   pgsutil.FileHeader,
+		"doc":      p.doc,
 	})
 
 	p.tpl = template.Must(tpl.Parse(rpcTpl))
@@ -58,7 +61,17 @@ func (p *GoRPCModule) fullName(e pgs.Entity) string {
 	return strings.TrimPrefix(e.FullyQualifiedName(), ".")
 }
 
-const rpcTpl = `package {{ package . }}
+// doc returns e's proto comment as a Go doc comment, or fallback as one
+// when e has none ("" for no comment).
+func (p *GoRPCModule) doc(e pgs.Entity, fallback string) string {
+	lines := pgsutil.CommentLines(e.SourceCodeInfo())
+	if len(lines) == 0 && fallback != "" {
+		lines = []string{fallback}
+	}
+	return pgsutil.LineComment(lines, "")
+}
+
+const rpcTpl = `{{ header . }}package {{ package . }}
 
 import (
 	"context"
@@ -73,9 +86,8 @@ func Register{{$svcName}}Service(host rpc.ServiceRegistry, service {{$svcName}}S
 {{range .Methods}}  host.RegisterMethod("{{. | fullName}}", service.{{.Name.UpperCamelCase}})
 {{end}}}
 
-// {{$svcName}}Service ...
-type {{$svcName}}Service interface {
-{{range .Methods}}  {{.Name.UpperCamelCase}} (
+{{ doc . (printf "%sService ..." $svcName) }}type {{$svcName}}Service interface {
+{{range .Methods}}{{ doc . "" }}  {{.Name.UpperCamelCase}} (
 	  ctx context.Context,
 	  req *{{.Input.Name.UpperCamelCase}},
   ) ({{if .ServerStreaming}}<-chan {{end}}*{{.Output.Name.UpperCamelCase}}, error)
@@ -104,8 +116,7 @@ func New{{$svcName}}Client(client rpc.Caller) *{{$svcName}}Client {
 	return &{{$svcName}}Client{client}
 }
 {{range .Methods}}
-// {{.Name.UpperCamelCase}} ...
-func (c *{{$svcName}}Client) {{.Name.UpperCamelCase}} (
+{{ doc . (printf "%s ..." .Name.UpperCamelCase) }}func (c *{{$svcName}}Client) {{.Name.UpperCamelCase}} (
 	ctx context.Context,
 	req *{{.Input.Name.UpperCamelCase}},
 	res {{if .ServerStreaming}}chan {{end}}*{{.Output.Name.UpperCamelCase}},

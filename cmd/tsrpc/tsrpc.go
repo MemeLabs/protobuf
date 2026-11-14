@@ -58,6 +58,7 @@ type generator struct {
 }
 
 func (g *generator) generateFile(f pgs.File) {
+	g.Header(f)
 	g.generateImports(f)
 
 	for _, s := range f.Services() {
@@ -121,6 +122,7 @@ EachService:
 }
 
 func (g *generator) generateService(s pgs.Service) {
+	g.Doc(s)
 	g.Linef(`export interface %sService {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
 		output := ts.FQN(m.Output())
@@ -130,6 +132,7 @@ func (g *generator) generateService(s pgs.Service) {
 			output = fmt.Sprintf("Promise<%[1]s> | %[1]s", output)
 		}
 
+		g.Doc(m)
 		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s;`, m.Name().LowerCamelCase(), ts.FQN(m.Input()), output)
 	}
 	g.Line(`}`)
@@ -144,6 +147,8 @@ func (g *generator) generateService(s pgs.Service) {
 			output = fmt.Sprintf("Promise<%[1]s> | %[1]s", output)
 		}
 
+		// the parameters stay so subclasses can override the stubs with them
+		g.Line(`// eslint-disable-next-line @typescript-eslint/no-unused-vars`)
 		g.Linef(`%s(req: %s, call: strims_rpc_Call): %s { throw new Error("not implemented"); }`, m.Name().LowerCamelCase(), ts.FQN(m.Input()), output)
 	}
 	g.Line(`}`)
@@ -151,15 +156,17 @@ func (g *generator) generateService(s pgs.Service) {
 
 	g.Linef(`export const register%[1]sService = (host: strims_rpc_Service, service: %[1]sService): void => {`, s.Name().UpperCamelCase())
 	for _, m := range s.Methods() {
-		g.Linef(`host.registerMethod<%s, %s>("%s", service.%s.bind(service), %s);`, ts.FQN(m.Input()), ts.FQN(m.Output()), g.fullName(m), m.Name().LowerCamelCase(), ts.FQN(m.Input()))
+		g.Linef(`host.registerMethod<%s, %s>("%s", (req, call) => service.%s(req, call), %s);`, ts.FQN(m.Input()), ts.FQN(m.Output()), g.fullName(m), m.Name().LowerCamelCase(), ts.FQN(m.Input()))
 	}
 	g.Line(`}`)
 	g.LineBreak()
 
+	g.Doc(s)
 	g.Linef(`export class %sClient {`, s.Name().UpperCamelCase())
 	g.Line(`constructor(private readonly host: strims_rpc_Host) {}`)
 	for _, m := range s.Methods() {
 		g.LineBreak()
+		g.Doc(m)
 		if m.ServerStreaming() {
 			g.Linef(`public %s(req?: %s): GenericReadable<%s> {`, m.Name().LowerCamelCase(), ts.IfFQN(m.Input()), ts.FQN(m.Output()))
 			g.Linef(`return this.host.expectMany(this.host.call("%s", new %s(req)), %s);`, g.fullName(m), ts.FQN(m.Input()), ts.FQN(m.Output()))

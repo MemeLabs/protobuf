@@ -31,7 +31,7 @@ export default class Host {
     this.argWriter = new Writer();
     this.callWriter = new Writer();
 
-    r.on("data", this.handleData.bind(this));
+    r.on("data", (data: ArrayBuffer) => this.handleData(data));
   }
 
   public call(
@@ -60,6 +60,8 @@ export default class Host {
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       const tid = setTimeout(() => {
+        // callers (strims' rpcError.ts, say) tell a timeout by its undefined reason
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         reject();
         this.callbacks.delete(call.id);
       }, timeout || CALL_TIMEOUT_MS);
@@ -73,6 +75,8 @@ export default class Host {
             resolve(Message.decode(res.argument));
             break;
           case Call.Kind.CALL_KIND_ERROR:
+            // callers read the rpc.Error's code, and test for it with instanceof
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
             reject(Error.decode(res.argument));
             break;
         }
@@ -106,7 +110,7 @@ export default class Host {
       }
     });
 
-    return (e as unknown) as GenericReadable<T>;
+    return e;
   }
 
   private handleData(data: ArrayBuffer) {

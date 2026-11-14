@@ -18,13 +18,15 @@ export interface RPCTestService {
 }
 
 export class UnimplementedRPCTestService implements RPCTestService {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   callUnary(req: strims_test_RPCCallUnaryRequest, call: strims_rpc_Call): Promise<strims_test_RPCCallUnaryResponse> | strims_test_RPCCallUnaryResponse { throw new Error("not implemented"); }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   callStream(req: strims_test_RPCCallStreamRequest, call: strims_rpc_Call): GenericReadable<strims_test_RPCCallStreamResponse> { throw new Error("not implemented"); }
 }
 
 export const registerRPCTestService = (host: strims_rpc_Service, service: RPCTestService): void => {
-  host.registerMethod<strims_test_RPCCallUnaryRequest, strims_test_RPCCallUnaryResponse>("strims.test.RPCTest.CallUnary", service.callUnary.bind(service), strims_test_RPCCallUnaryRequest);
-  host.registerMethod<strims_test_RPCCallStreamRequest, strims_test_RPCCallStreamResponse>("strims.test.RPCTest.CallStream", service.callStream.bind(service), strims_test_RPCCallStreamRequest);
+  host.registerMethod<strims_test_RPCCallUnaryRequest, strims_test_RPCCallUnaryResponse>("strims.test.RPCTest.CallUnary", (req, call) => service.callUnary(req, call), strims_test_RPCCallUnaryRequest);
+  host.registerMethod<strims_test_RPCCallStreamRequest, strims_test_RPCCallStreamResponse>("strims.test.RPCTest.CallStream", (req, call) => service.callStream(req, call), strims_test_RPCCallStreamRequest);
 }
 
 export class RPCTestClient {

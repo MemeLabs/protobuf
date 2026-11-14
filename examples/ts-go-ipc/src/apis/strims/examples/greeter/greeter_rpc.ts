@@ -13,11 +13,12 @@ export interface GreeterService {
 }
 
 export class UnimplementedGreeterService implements GreeterService {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   greet(req: strims_examples_greeter_GreetRequest, call: strims_rpc_Call): Promise<strims_examples_greeter_GreetResponse> | strims_examples_greeter_GreetResponse { throw new Error("not implemented"); }
 }
 
 export const registerGreeterService = (host: strims_rpc_Service, service: GreeterService): void => {
-  host.registerMethod<strims_examples_greeter_GreetRequest, strims_examples_greeter_GreetResponse>("strims.examples.greeter.Greeter.Greet", service.greet.bind(service), strims_examples_greeter_GreetRequest);
+  host.registerMethod<strims_examples_greeter_GreetRequest, strims_examples_greeter_GreetResponse>("strims.examples.greeter.Greeter.Greet", (req, call) => service.greet(req, call), strims_examples_greeter_GreetRequest);
 }
 
 export class GreeterClient {

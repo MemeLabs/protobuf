@@ -6,7 +6,7 @@ export type ICall = {
   id?: bigint;
   parentId?: bigint;
   method?: string;
-  kind?: Call.Kind;
+  kind?: strims_rpc_Call_Kind;
   argument?: Uint8Array;
   headers?: Map<string, Uint8Array> | { [key: string]: Uint8Array };
 }
@@ -15,7 +15,7 @@ export class Call {
   id: bigint;
   parentId: bigint;
   method: string;
-  kind: Call.Kind;
+  kind: strims_rpc_Call_Kind;
   argument: Uint8Array;
   headers: Map<string, Uint8Array>;
 
@@ -144,11 +144,11 @@ export class Error {
   }
 }
 
-export type ICancel = Record<string, any>;
+export type ICancel = object;
 
 export class Cancel {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: ICancel) {
   }
 
@@ -163,11 +163,11 @@ export class Cancel {
   }
 }
 
-export type IUndefined = Record<string, any>;
+export type IUndefined = object;
 
 export class Undefined {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IUndefined) {
   }
 
@@ -182,11 +182,11 @@ export class Undefined {
   }
 }
 
-export type IClose = Record<string, any>;
+export type IClose = object;
 
 export class Close {
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(v?: IClose) {
   }
 
@@ -201,3 +201,37 @@ export class Close {
   }
 }
 
+/* @internal */
+export const strims_rpc_Call = Call;
+/* @internal */
+export type strims_rpc_Call = Call;
+/* @internal */
+export type strims_rpc_ICall = ICall;
+/* @internal */
+export const strims_rpc_Error = Error;
+/* @internal */
+export type strims_rpc_Error = Error;
+/* @internal */
+export type strims_rpc_IError = IError;
+/* @internal */
+export const strims_rpc_Cancel = Cancel;
+/* @internal */
+export type strims_rpc_Cancel = Cancel;
+/* @internal */
+export type strims_rpc_ICancel = ICancel;
+/* @internal */
+export const strims_rpc_Undefined = Undefined;
+/* @internal */
+export type strims_rpc_Undefined = Undefined;
+/* @internal */
+export type strims_rpc_IUndefined = IUndefined;
+/* @internal */
+export const strims_rpc_Close = Close;
+/* @internal */
+export type strims_rpc_Close = Close;
+/* @internal */
+export type strims_rpc_IClose = IClose;
+/* @internal */
+export const strims_rpc_Call_Kind = Call.Kind;
+/* @internal */
+export type strims_rpc_Call_Kind = Call.Kind;
