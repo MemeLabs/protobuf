@@ -1,7 +1,5 @@
 {
-  "eslint.validate": [
-    "typescript",
-  ],
+  "eslint.validate": ["typescript"],
   "[typescript]": {
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "esbenp.prettier-vscode",
@@ -15,12 +13,12 @@
     "editor.codeActionsOnSave": {
       "source.organizeImports": true
     },
-    "files.eol": "\n",
+    "files.eol": "\n"
   },
   "go.useLanguageServer": true,
   "go.vetOnSave": "package",
   "gopls": {
     "usePlaceholders": true,
-    "staticcheck": false,
+    "staticcheck": false
   }
 }

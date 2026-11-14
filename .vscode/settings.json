@@ -1,11 +1,6 @@
 {
   // eslint extension options
-  "eslint.validate": [
-    "javascript",
-    "javascriptreact",
-    "typescript",
-    "typescriptreact",
-  ],
+  "eslint.validate": ["javascript", "javascriptreact", "typescript", "typescriptreact"],
   // prettier extension setting
   "[javascript]": {
     "editor.formatOnSave": true,
@@ -47,7 +42,7 @@
   "go.vetOnSave": "package",
   "gopls": {
     "usePlaceholders": true,
-    "staticcheck": false,
+    "staticcheck": false
   },
   "protoc": {
     "path": "/usr/local/bin/protoc",
@@ -61,7 +56,7 @@
       "--ts_out=src/apis",
       "--ts_opt=runtime=self",
       "--tsrpc_out=src/apis",
-      "--tsrpc_opt=runtime=self",
+      "--tsrpc_opt=runtime=self"
     ]
   }
 }

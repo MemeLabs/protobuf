@@ -1,7 +1,7 @@
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 name: Create Release
 
@@ -57,7 +57,7 @@ jobs:
           create_asset_zip "win32" "windows" "386" ".exe"
         env:
           TAG: ${{ github.ref_name }}
-          CGO_ENABLED: '0'
+          CGO_ENABLED: "0"
       - uses: JS-DevTools/npm-publish@v4
         with:
           access: public
