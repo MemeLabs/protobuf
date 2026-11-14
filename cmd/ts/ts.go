@@ -8,8 +8,8 @@ import (
 
 	"github.com/MemeLabs/protobuf/pkg/pgsutil"
 	"github.com/MemeLabs/protobuf/pkg/ts"
-	"github.com/golang/protobuf/protoc-gen-go/descriptor"
-	pgs "github.com/lyft/protoc-gen-star"
+	pgs "github.com/lyft/protoc-gen-star/v2"
+	descriptor "google.golang.org/protobuf/types/descriptorpb"
 )
 
 // TSModule ...

@@ -1,7 +1,7 @@
 package ts
 
 import (
-	pgs "github.com/lyft/protoc-gen-star"
+	pgs "github.com/lyft/protoc-gen-star/v2"
 )
 
 // Context ...

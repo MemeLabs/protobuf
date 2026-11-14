@@ -3,13 +3,16 @@
     "declaration": true,
     "downlevelIteration": true,
     "esModuleInterop": true,
+    "ignoreDeprecations": "6.0",
     "lib": ["dom", "es2020"],
     "module": "commonjs",
     "moduleResolution": "node",
     "outDir": "lib",
     "removeComments": true,
     "rootDir": "src",
-    "target": "es5"
+    "strict": false,
+    "target": "es5",
+    "types": ["node", "mocha"]
   },
   "include": ["src"],
   "exclude": [

@@ -1,0 +1,44 @@
+import js from "@eslint/js";
+import { defineConfig } from "eslint/config";
+import prettier from "eslint-config-prettier/flat";
+import jsdoc from "eslint-plugin-jsdoc";
+import preferArrow from "eslint-plugin-prefer-arrow";
+import globals from "globals";
+import tseslint from "typescript-eslint";
+
+export default defineConfig([
+  {
+    files: ["**/*.ts"],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.recommendedTypeChecked,
+      jsdoc.configs["flat/recommended"],
+      prettier,
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2020,
+      },
+      parserOptions: {
+        project: "./tsconfig.json",
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    plugins: {
+      "prefer-arrow": preferArrow,
+    },
+    rules: {
+      "@typescript-eslint/no-inferrable-types": "off",
+      "@typescript-eslint/no-namespace": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unused-vars": "warn",
+      "prefer-arrow/prefer-arrow-functions": "error",
+      "max-classes-per-file": "off",
+      "max-len": ["warn", { "code": 100, "ignoreComments": true }],
+      "no-bitwise": "off",
+      "no-console": "off",
+      "quote-props": ["error", "consistent"],
+    },
+  },
+]);

@@ -6,7 +6,7 @@ import (
 
 	"github.com/MemeLabs/protobuf/pkg/pgsutil"
 	"github.com/MemeLabs/protobuf/pkg/ts"
-	pgs "github.com/lyft/protoc-gen-star"
+	pgs "github.com/lyft/protoc-gen-star/v2"
 )
 
 // TSRPCModule ...
