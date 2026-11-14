@@ -9,46 +9,44 @@ jobs:
   build:
     name: Create Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+      id-token: write # npm trusted publishing (OIDC)
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
-      - uses: actions/setup-go@v2
+        uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '^1.16.3'
-      - uses: actions/setup-node@v1
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
         with:
-          node-version: 14
-      - run: npm install
+          node-version: 26
+          cache: npm
+      - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: JS-DevTools/npm-publish@v1
-        with:
-          access: public
-          token: ${{ secrets.NPM_TOKEN }}
-      - name: Release protoc plugins
+      - name: Build protoc plugins
         run: |
-          TAG="${REF##*/}"
-          VER="${TAG##v}"
+          VER="${TAG#v}"
           OUT="protoc-plugins-$VER"
 
-          mkdir $OUT
-          mkdir assets
+          mkdir "$OUT" assets
 
           create_asset() {
-            rm -rf $OUT/*
-            GOOS=$1 GOARCH=$2 go build -o "$OUT/protoc-gen-ts$3" ./cmd/ts/
-            GOOS=$1 GOARCH=$2 go build -o "$OUT/protoc-gen-gorpc$3" ./cmd/gorpc/
-            GOOS=$1 GOARCH=$2 go build -o "$OUT/protoc-gen-tsrpc$3" ./cmd/tsrpc/
+            rm -rf "${OUT:?}"/*
+            for PLUGIN in ts gorpc tsrpc; do
+              GOOS=$1 GOARCH=$2 go build -trimpath -o "$OUT/protoc-gen-$PLUGIN$3" "./cmd/$PLUGIN/"
+            done
           }
 
           create_asset_tgz() {
-            create_asset $2 $3 $4
-            tar -czf "assets/$OUT-$1.tar.gz" $OUT
+            create_asset "$2" "$3" "$4"
+            tar -czf "assets/$OUT-$1.tar.gz" "$OUT"
           }
 
           create_asset_zip() {
-            create_asset $2 $3 $4
-            zip -r "assets/$OUT-$1.zip" $OUT
+            create_asset "$2" "$3" "$4"
+            zip -r "assets/$OUT-$1.zip" "$OUT"
           }
 
           create_asset_tgz "linux-x86_64" "linux" "amd64"
@@ -57,12 +55,15 @@ jobs:
           create_asset_tgz "osx-arm64" "darwin" "arm64"
           create_asset_zip "win64" "windows" "amd64" ".exe"
           create_asset_zip "win32" "windows" "386" ".exe"
-
-          ASSETS=()
-          for ASSET in ./assets/*; do
-            ASSETS+=("-a" "$ASSET")
-          done
-          hub release create "${ASSETS[@]}" -m "protobuf $TAG" "$TAG"
         env:
-          REF: ${{ github.ref }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          CGO_ENABLED: '0'
+      - uses: JS-DevTools/npm-publish@v4
+        with:
+          access: public
+      - name: Release protoc plugins
+        run: gh release create "$TAG" assets/* --title "protobuf $TAG" --notes ""
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
