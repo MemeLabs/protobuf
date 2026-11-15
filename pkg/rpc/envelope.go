@@ -9,7 +9,7 @@ import (
 // length of its encoded key and value, excluding the entry's own tag and
 // length prefix. Entries are counted as they appear on the wire, duplicate
 // keys included. A frame over either limit is rejected with
-// ErrTooManyHeaders.
+// ErrTooManyHeaders, except a CANCEL, which is still honoured.
 const (
 	MaxHeaders     = 64
 	MaxHeaderBytes = 64 << 10

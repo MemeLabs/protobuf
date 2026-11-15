@@ -26,6 +26,10 @@ var ErrMessageTooLarge = errors.New("received message too large")
 //
 // The transport closes ReadWriter, if it is an io.Closer, when it stops; Close
 // may be called concurrently with Read and Write.
+//
+// Each frame the transport rejects or drops is logged at Debug. A Warn
+// summary of their counts by reason is logged at most once every 10s, and
+// when the transport stops.
 type RWDialer struct {
 	Logger     *zap.Logger
 	ReadWriter io.ReadWriter
@@ -74,7 +78,9 @@ func (d *RWDialer) Dial(ctx context.Context, dispatcher Dispatcher) (Transport, 
 		maxStreamBufferBytes: maxStreamBufferBytes,
 		maxConcurrentCalls:   concurrentCallLimit(d.MaxConcurrentCalls),
 		dispatcher:           dispatcher,
+		serves:               !isClientDispatcher(dispatcher),
 		rejections:           make(chan rejection, rejectionQueueLen),
+		drops:                dropLog{logger: logger},
 		calls: &rwParentCallMap{
 			callsIn:  map[uint64]*CallIn{},
 			callsOut: map[uint64]*CallOut{},
@@ -93,7 +99,9 @@ type RWTransport struct {
 	maxConcurrentCalls   int // negative means unlimited
 	inService            callSlots
 	dispatcher           Dispatcher
+	serves               bool // dispatcher serves requests
 	rejections           chan rejection
+	drops                dropLog
 	calls                *rwParentCallMap
 	writeLock            sync.Mutex
 	dispatchLock         sync.Mutex
@@ -124,6 +132,7 @@ func (t *RWTransport) Listen() error {
 	t.dispatchLock.Lock()
 	t.dispatchLock.Unlock()
 
+	t.drops.flush()
 	return err
 }
 
@@ -162,22 +171,20 @@ func (t *RWTransport) dispatch(b []byte) error {
 	// The frame was read in full, so framing is intact: skip only this frame.
 	env, err := scanEnvelope(b)
 	if err != nil {
-		t.logger.Warn(
-			"rpc transport dropped malformed frame",
-			zap.Int("length", len(b)),
-			zap.Error(err),
-		)
+		t.dropMalformed(b, err)
 		return nil
 	}
 
 	if env.overHeaderLimit() {
-		t.logger.Warn(
-			"rpc transport rejected frame with too many headers",
-			zap.Uint64("id", env.id),
-			zap.ByteString("method", env.method),
-			zap.Int("headers", env.headers),
-			zap.Int("headerBytes", env.headerBytes),
-		)
+		if ce := t.logger.Check(zap.DebugLevel, "rpc transport rejected frame with too many headers"); ce != nil {
+			ce.Write(
+				zap.Uint64("id", env.id),
+				zap.String("method", string(env.method)),
+				zap.Int("headers", env.headers),
+				zap.Int("headerBytes", env.headerBytes),
+			)
+		}
+		t.drops.add(dropHeaderLimit)
 		switch {
 		case env.isCancel():
 			req := &pb.Call{Id: env.id, ParentId: env.parentID, Method: cancelMethod}
@@ -186,7 +193,7 @@ func (t *RWTransport) dispatch(b []byte) error {
 			if call := t.calls.CallOut(env.parentID); call != nil {
 				call.fail(ErrTooManyHeaders)
 			}
-		default:
+		case t.serves:
 			t.reject(env.id, ErrTooManyHeaders)
 		}
 		return nil
@@ -195,11 +202,13 @@ func (t *RWTransport) dispatch(b []byte) error {
 	release := noopRelease
 	if !env.isCancel() {
 		if !t.inService.acquire(t.maxConcurrentCalls) {
-			t.logger.Warn(
-				"rpc transport rejected frame over the call limit",
-				zap.Uint64("id", env.id),
-				zap.ByteString("method", env.method),
-			)
+			if ce := t.logger.Check(zap.DebugLevel, "rpc transport rejected frame over the call limit"); ce != nil {
+				ce.Write(
+					zap.Uint64("id", env.id),
+					zap.String("method", string(env.method)),
+				)
+			}
+			t.drops.add(dropCallLimit)
 			if !env.isCallback() {
 				t.reject(env.id, ErrTooManyCalls)
 			}
@@ -211,15 +220,21 @@ func (t *RWTransport) dispatch(b []byte) error {
 	req := &pb.Call{}
 	if err := envelopeUnmarshal.Unmarshal(b, req); err != nil {
 		release()
-		t.logger.Warn(
-			"rpc transport dropped malformed frame",
-			zap.Int("length", len(b)),
-			zap.Error(err),
-		)
+		t.dropMalformed(b, err)
 		return nil
 	}
 	t.dispatchCall(req, len(b), release)
 	return nil
+}
+
+func (t *RWTransport) dropMalformed(b []byte, err error) {
+	if ce := t.logger.Check(zap.DebugLevel, "rpc transport dropped malformed frame"); ce != nil {
+		ce.Write(
+			zap.Int("length", len(b)),
+			zap.Error(err),
+		)
+	}
+	t.drops.add(dropMalformed)
 }
 
 // dispatchCall dispatches req, received in a frame of frameBytes, and calls
@@ -250,11 +265,13 @@ func (t *RWTransport) reject(id uint64, err error) {
 	select {
 	case t.rejections <- rejection{id, err}:
 	default:
-		t.logger.Warn(
-			"rpc transport dropped rejection",
-			zap.Uint64("id", id),
-			zap.Error(err),
-		)
+		if ce := t.logger.Check(zap.DebugLevel, "rpc transport dropped rejection"); ce != nil {
+			ce.Write(
+				zap.Uint64("id", id),
+				zap.Error(err),
+			)
+		}
+		t.drops.add(dropRejection)
 	}
 }
 

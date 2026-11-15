@@ -591,7 +591,7 @@ func TestHardRejectionQueue(t *testing.T) {
 	const fn = "rpc.(*RWTransport).sendRejections"
 	before := hardGoroutines(fn)
 
-	core, logs := observer.New(zap.WarnLevel)
+	core, logs := observer.New(zap.DebugLevel)
 	entered := make(chan struct{})
 	disp := NewServiceDispatcher(zap.NewNop())
 	disp.RegisterMethod("hard.enter", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
@@ -922,7 +922,7 @@ func TestHardCallCapRejects(t *testing.T) {
 	start := time.Now()
 	err := c.CallUnary(hardCallTimeout(t), "hard.block", &pb.Error{}, &pb.Error{})
 	var e *pb.Error
-	if !errors.As(err, &e) || e.Message != hardTooManyCalls || ErrorCode(err) != 1003 {
+	if !errors.As(err, &e) || e.Message != hardTooManyCalls || ErrorCode(err) != 1003 || !errors.Is(err, ErrTooManyCalls) {
 		t.Fatalf("got %v (code %d), want %q with code 1003", err, ErrorCode(err), hardTooManyCalls)
 	}
 	if d := time.Since(start); d > time.Second {
@@ -1162,6 +1162,33 @@ func TestHardCallCapDefaults(t *testing.T) {
 			t.Fatalf("request after %d held calls was not dispatched", h.count("hard.hold"))
 		}
 	})
+
+	t.Run("http default", func(t *testing.T) {
+		s := NewHTTPServer(zap.NewNop())
+		var entered atomic.Int32
+		release := make(chan struct{})
+		s.RegisterMethod("hard.block", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+			entered.Add(1)
+			<-release
+			return &pb.Error{}, nil
+		})
+		var served sync.WaitGroup
+		defer served.Wait()
+		defer close(release)
+		for i := range 128 {
+			served.Go(func() {
+				s.ServeHTTP(httptest.NewRecorder(), srvHTTPRequest(t, context.Background(), &pb.Call{Id: uint64(i + 1), Method: "hard.block", Argument: hardArg(t)}))
+			})
+		}
+		if !cliEventually(2*time.Second, func() bool { return entered.Load() == 128 }) {
+			t.Fatalf("%d of 128 calls served", entered.Load())
+		}
+		w := httptest.NewRecorder()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		s.ServeHTTP(w, srvHTTPRequest(t, ctx, &pb.Call{Id: 1000, Method: "hard.block", Argument: hardArg(t)}))
+		hardWantError(t, srvHTTPDecode(t, w.Body.Bytes()), 1000, hardTooManyCalls, 1003)
+	})
 }
 
 // Negative MaxMessageBytes means unlimited, and a frame's memory is
@@ -1217,4 +1244,354 @@ func TestHardMessageBytesUnlimited(t *testing.T) {
 			t.Fatalf("request longer than an int: got %d, want 413", w.Code)
 		}
 	})
+}
+
+// hardAllocated returns the bytes allocated while fn runs.
+func hardAllocated(fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// hardSlowReader returns at most one byte per Read.
+type hardSlowReader struct{ r io.Reader }
+
+func (r hardSlowReader) Read(p []byte) (int, error) { return r.r.Read(p[:min(len(p), 1)]) }
+
+// readFrame allocates as a frame's bytes arrive, growing geometrically.
+func TestHardReadFrameAllocation(t *testing.T) {
+	forged := hardAllocated(func() {
+		if _, err := readFrame(bytes.NewReader(make([]byte, 32)), nil, 512<<10); !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("got %v, want io.ErrUnexpectedEOF", err)
+		}
+	})
+	t.Logf("32 bytes of a frame claiming 512 KiB: %d bytes allocated", forged)
+	if forged > 256<<10 {
+		t.Errorf("32 bytes of a frame claiming 512 KiB allocated %d bytes", forged)
+	}
+
+	const l = 4 << 20
+	src := bytes.NewReader(make([]byte, l))
+	full := hardAllocated(func() {
+		b, err := readFrame(src, nil, l)
+		if err != nil || len(b) != l {
+			t.Fatalf("read %d bytes, %v", len(b), err)
+		}
+	})
+	t.Logf("a %d-byte frame: %d bytes allocated", l, full)
+	if full > 3*l {
+		t.Errorf("a %d-byte frame allocated %d bytes", l, full)
+	}
+
+	b, err := readFrame(hardSlowReader{bytes.NewReader([]byte("frame!"))}, make([]byte, 0, 2), 6)
+	if err != nil || string(b) != "frame!" {
+		t.Fatalf("got %q, %v", b, err)
+	}
+}
+
+// A request over the call limit is rejected before its envelope is
+// decoded.
+func TestHardCallCapBeforeDecode(t *testing.T) {
+	h := &hardHolder{}
+	tr, err := (&RWDialer{ReadWriter: hardDiscardRW{}, MaxConcurrentCalls: 1}).Dial(context.Background(), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rw := tr.(*RWTransport)
+	if err := rw.dispatch(hardFrame(t, &pb.Call{Id: 1, Method: "hard.hold"})); err != nil {
+		t.Fatal(err)
+	}
+
+	frame := hardFrame(t, &pb.Call{Id: 2, Method: "hard.other", Argument: make([]byte, 256<<10)})
+	const n = 20
+	allocated := hardAllocated(func() {
+		for range n {
+			if err := rw.dispatch(frame); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if allocated > 1<<20 {
+		t.Errorf("rejecting %d frames of %d bytes allocated %d bytes", n, len(frame), allocated)
+	}
+	if got := len(rw.rejections); got != n {
+		t.Errorf("queued %d rejections, want %d", got, n)
+	}
+}
+
+// A frame that scans but doesn't decode gives back its slot.
+func TestHardDecodeFailureReleases(t *testing.T) {
+	bad := []byte{0x1a, 0x01, 0xff} // a method that isn't UTF-8
+	if _, err := scanEnvelope(bad); err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if err := envelopeUnmarshal.Unmarshal(bad, &pb.Call{}); err == nil {
+		t.Fatal("bad frame decodes")
+	}
+
+	t.Run("rw", func(t *testing.T) {
+		disp, _ := hardCounter("hard.count")
+		p := hardServe(t, disp, nil)
+		p.startReading()
+		p.write(t, bad)
+		p.write(t, hardFrame(t, &pb.Call{Id: 1, Method: "hard.count", Argument: hardArg(t)}))
+		p.next(t)
+		if !cliEventually(time.Second, func() bool { return p.tr.inService.n.Load() == 0 }) {
+			t.Fatalf("%d calls in service, want 0", p.tr.inService.n.Load())
+		}
+	})
+
+	t.Run("http", func(t *testing.T) {
+		s := NewHTTPServer(zap.NewNop())
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, httptest.NewRequest("POST", "/", bytes.NewReader(append([]byte{byte(len(bad))}, bad...))))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("got %d, want 400", w.Code)
+		}
+		if n := s.inService.n.Load(); n != 0 {
+			t.Fatalf("%d calls in service, want 0", n)
+		}
+	})
+}
+
+// The envelope decoder drops unknown fields and nests at most 2 deep, for
+// requests and for ERROR responses.
+func TestHardEnvelopeDecode(t *testing.T) {
+	if err := envelopeUnmarshal.Unmarshal(srvMarshal(t, hardNested(2)), &descriptorpb.DescriptorProto{}); err != nil {
+		t.Fatalf("depth 2: %v", err)
+	}
+	if err := envelopeUnmarshal.Unmarshal(srvMarshal(t, hardNested(3)), &descriptorpb.DescriptorProto{}); err == nil {
+		t.Fatal("depth 3 accepted")
+	}
+
+	unknown := protowire.AppendBytes(protowire.AppendTag(nil, 15, protowire.BytesType), make([]byte, 1024))
+
+	calls := make(chan *CallIn, 1)
+	tr, err := (&RWDialer{ReadWriter: hardDiscardRW{}}).Dial(context.Background(), cliDispatcherFunc(func(c *CallIn, done func()) {
+		calls <- c
+		done()
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.(*RWTransport).dispatch(append(hardFrame(t, &pb.Call{Id: 1, Method: "m"}), unknown...)); err != nil {
+		t.Fatal(err)
+	}
+	if u := (<-calls).req.ProtoReflect().GetUnknown(); len(u) != 0 {
+		t.Errorf("request kept %d bytes of unknown fields", len(u))
+	}
+
+	err = unmarshalResponse(pb.Call_CALL_KIND_ERROR, append(srvMarshal(t, &pb.Error{Message: "x"}), unknown...), nil, defaultUnmarshal)
+	var e *pb.Error
+	if !errors.As(err, &e) || e.Message != "x" {
+		t.Fatalf("got %v, want the ERROR response", err)
+	}
+	if u := e.ProtoReflect().GetUnknown(); len(u) != 0 {
+		t.Errorf("ERROR response kept %d bytes of unknown fields", len(u))
+	}
+}
+
+// A client transport drops an over-limit request as it does any request,
+// without answering it.
+func TestHardHeaderCapClientIgnoresRequest(t *testing.T) {
+	clientRW, peerRW := cliNewPipePair(t)
+	c, err := NewClient(zap.NewNop(), &RWDialer{ReadWriter: clientRW})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	p := &hardPeer{rw: peerRW, recv: make(chan *pb.Call, 1)}
+	p.startReading()
+
+	p.write(t, hardFrame(t, &pb.Call{Id: 5, Method: "hard.count"}, hardHeaders(MaxHeaders+1)...))
+	select {
+	case res := <-p.recv:
+		t.Fatalf("client answered with %v to %d", res.Kind, res.ParentId)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// The logged method is a copy, not the read buffer the next frame reuses.
+func TestHardLogMethodCopied(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	disp, _ := hardCounter("hard.count")
+	p := hardServe(t, disp, func(d *RWDialer) { d.Logger = zap.New(core) })
+	p.startReading()
+
+	for i, method := range []string{"AAAAAAAA", "BBBBBBBB"} {
+		p.write(t, hardFrame(t, &pb.Call{Id: uint64(i + 1), Method: method}, hardHeaders(MaxHeaders+1)...))
+		p.next(t)
+	}
+	entries := logs.FilterMessage("rpc transport rejected frame with too many headers").All()
+	if len(entries) != 2 {
+		t.Fatalf("%d entries, want 2", len(entries))
+	}
+	if m := entries[0].ContextMap()["method"]; m != "AAAAAAAA" {
+		t.Fatalf("first entry's method is %q, want \"AAAAAAAA\"", m)
+	}
+}
+
+// hardDropCounts sums the Warn summaries' counts by key.
+func hardDropCounts(entries []observer.LoggedEntry) map[string]int64 {
+	sums := map[string]int64{}
+	for _, e := range entries {
+		for k, v := range e.ContextMap() {
+			sums[k] += v.(int64)
+		}
+	}
+	return sums
+}
+
+// Drops are logged at Warn as one summary on the first drop in each
+// interval and on flush.
+func TestHardDropLogInterval(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	now := time.Unix(1000, 0)
+	l := &dropLog{logger: zap.New(core), now: func() time.Time { return now }}
+	step := func(d time.Duration, reasons ...dropReason) {
+		now = now.Add(d)
+		for _, r := range reasons {
+			l.add(r)
+		}
+	}
+
+	step(0, dropMalformed) // first drop: summary
+	step(time.Second, dropCallLimit, dropCallLimit)
+	step(8*time.Second, dropRejection) // 9s since the summary
+	step(time.Second, dropHeaderLimit) // 10s: summary
+	step(time.Second, dropMalformed)   // 1s since the summary
+	l.flush()                          // summary
+	l.flush()                          // nothing left
+
+	want := []map[string]int64{
+		{"malformed": 1, "overCallLimit": 0, "overHeaderLimit": 0, "droppedRejections": 0},
+		{"malformed": 0, "overCallLimit": 2, "overHeaderLimit": 1, "droppedRejections": 1},
+		{"malformed": 1, "overCallLimit": 0, "overHeaderLimit": 0, "droppedRejections": 0},
+	}
+	entries := logs.All()
+	if len(entries) != len(want) {
+		t.Fatalf("logged %d summaries, want %d", len(entries), len(want))
+	}
+	for i, e := range entries {
+		for k, v := range want[i] {
+			if got := e.ContextMap()[k]; got != v {
+				t.Errorf("summary %d: %s = %v, want %d", i, k, got, v)
+			}
+		}
+	}
+}
+
+// A flood of rejected frames logs a bounded number of Warn entries that
+// count every frame.
+func TestHardDropLogFlood(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	h := &hardHolder{}
+	p := hardServe(t, h, func(d *RWDialer) {
+		d.Logger = zap.New(core)
+		d.MaxConcurrentCalls = 1
+	})
+
+	p.write(t, hardFrame(t, &pb.Call{Id: 1, Method: "hard.hold"}))
+	const n = 20000
+	var flood []byte
+	for i := range n {
+		f := hardFrame(t, &pb.Call{Id: uint64(i + 2)})
+		flood = append(flood, byte(len(f)))
+		flood = append(flood, f...)
+	}
+	// Malformed frames: a truncated tag, and a CANCEL (never limited) whose
+	// header entry isn't wire format.
+	const malformed = 1000
+	badCancel := append(hardFrame(t, &pb.Call{ParentId: 999, Method: cancelMethod}), 0x32, 0x02, 0xff, 0xff)
+	for i := range malformed {
+		f := []byte{0xff, 0xff, 0xff}
+		if i%2 == 1 {
+			f = badCancel
+		}
+		flood = append(flood, byte(len(f)))
+		flood = append(flood, f...)
+	}
+	flood = append(flood, hardFrameDelimited(t, &pb.Call{Id: n + 2, ParentId: 1, Method: cancelMethod})...)
+	go p.rw.Write(flood)
+	if !cliEventually(5*time.Second, func() bool { return h.count(cancelMethod) == 1 }) {
+		t.Fatal("flood not processed")
+	}
+	p.stop()
+	cliWaitErr(t, p.done, time.Second, "Listen")
+
+	entries := logs.All()
+	if len(entries) > 3 {
+		t.Fatalf("%d frames logged %d Warn entries", n, len(entries))
+	}
+	for _, e := range entries {
+		if e.Message != "rpc transport rejected or dropped frames" {
+			t.Fatalf("unexpected Warn %q", e.Message)
+		}
+	}
+	counts := hardDropCounts(entries)
+	if counts["malformed"] != malformed {
+		t.Fatalf("summaries count %d malformed frames, want %d", counts["malformed"], malformed)
+	}
+	if counts["overCallLimit"] != n {
+		t.Fatalf("summaries count %d frames over the call limit, want %d", counts["overCallLimit"], n)
+	}
+	t.Logf("%d bytes for %d frames: %d Warn entries, counts %v", len(flood), n, len(entries), counts)
+}
+
+func hardFrameDelimited(t testing.TB, c *pb.Call) []byte {
+	f := hardFrame(t, c)
+	return append(binary.AppendUvarint(nil, uint64(len(f))), f...)
+}
+
+// A remote error matches the local error with its code, and code 0 matches
+// nothing.
+func TestHardRemoteErrorIs(t *testing.T) {
+	for _, tc := range []struct {
+		remote *pb.Error
+		target error
+		want   bool
+	}{
+		{&pb.Error{Code: 1003}, ErrTooManyCalls, true},
+		{&pb.Error{Code: 1010}, ErrStreamBufferFull, true},
+		{&pb.Error{Code: 1010}, ErrTooManyCalls, false},
+		{&pb.Error{Code: 1003}, &pb.Error{Code: 1003}, true},
+		{&pb.Error{Code: 0}, WrapError(errors.New("no code"), int32(0)), false},
+		{&pb.Error{Code: 0}, &pb.Error{Code: 0}, false},
+		{&pb.Error{Code: 0}, ErrTooManyHeaders, false},
+		{&pb.Error{Code: 1003}, errors.New("rpc: too many concurrent calls"), false},
+		{nil, ErrTooManyCalls, false},
+	} {
+		if got := errors.Is(fmt.Errorf("call: %w", tc.remote), tc.target); got != tc.want {
+			t.Errorf("errors.Is(%v code %d, %v) = %v, want %v", tc.remote, tc.remote.GetCode(), tc.target, got, tc.want)
+		}
+	}
+
+	entered := make(chan struct{}, 1)
+	c, st := hardConnServer(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("hard.block", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		d.RegisterMethod("hard.overflow", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+			return nil, fmt.Errorf("relayed: %w", ErrStreamBufferFull)
+		})
+	}, nil, hardCallCap(1))
+
+	if err := c.CallUnary(hardCallTimeout(t), "hard.overflow", &pb.Error{}, &pb.Error{}); !errors.Is(err, ErrStreamBufferFull) || errors.Is(err, ErrTooManyCalls) {
+		t.Fatalf("relayed overflow: got %v (code %d)", err, ErrorCode(err))
+	}
+	if !cliEventually(time.Second, func() bool { return st.inService.n.Load() == 0 }) {
+		t.Fatal("slot not released")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.CallUnary(ctx, "hard.block", &pb.Error{}, &pb.Error{})
+	cliWaitClosed(t, entered, 2*time.Second, "call not served")
+	if err := c.CallUnary(hardCallTimeout(t), "hard.block", &pb.Error{}, &pb.Error{}); !errors.Is(err, ErrTooManyCalls) {
+		t.Fatalf("over the limit: got %v (code %d), want ErrTooManyCalls", err, ErrorCode(err))
+	}
 }

@@ -149,6 +149,11 @@ func (c *Client) CallStreaming(ctx context.Context, method string, req proto.Mes
 
 type clientDispatcher struct{}
 
+func isClientDispatcher(d Dispatcher) bool {
+	_, ok := d.(*clientDispatcher)
+	return ok
+}
+
 // Dispatch hands callbacks to their pending call and drops all other frames,
 // including late callbacks. It runs on the read loop, so it must not block.
 func (c *clientDispatcher) Dispatch(call *CallIn, done func()) {

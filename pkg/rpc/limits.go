@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"io"
-	"slices"
 	"sync/atomic"
 )
 
@@ -22,7 +21,7 @@ type callSlots struct {
 	n atomic.Int64
 }
 
-// acquire takes a slot unless limit are taken; a negative limit means
+// acquire takes a slot unless limit slots are taken; a negative limit means
 // unlimited.
 func (s *callSlots) acquire(limit int) bool {
 	for {
@@ -65,7 +64,9 @@ func readFrame(r io.Reader, b []byte, l int) ([]byte, error) {
 	b = b[:0]
 	for len(b) < l {
 		n := min(l-len(b), max(len(b), frameChunk))
-		b = slices.Grow(b, n)
+		if cap(b)-len(b) < n {
+			b = append(make([]byte, 0, len(b)+n), b...)
+		}
 		m, err := io.ReadFull(r, b[len(b):len(b)+n])
 		b = b[:len(b)+m]
 		if err != nil {

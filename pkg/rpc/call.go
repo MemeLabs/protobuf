@@ -37,8 +37,9 @@ var responseTypeName = map[ResponseType]string{
 }
 
 // Dispatcher handles a transport's received frames. Dispatch must call done
-// once, from any goroutine, when it has finished with the call; until then
-// the call counts against the transport's limit on calls in service.
+// exactly once per dispatched call, from any goroutine, when it has finished
+// with the call. done releases the call's slot in the transport's limit on
+// calls in service (RWDialer.MaxConcurrentCalls).
 type Dispatcher interface {
 	Dispatch(call *CallIn, done func())
 }
