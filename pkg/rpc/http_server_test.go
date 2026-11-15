@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,46 +179,52 @@ func TestSrvHTTPSizeCap(t *testing.T) {
 		s.ServeHTTP(w, httptest.NewRequest("POST", "/", bytes.NewReader(body)))
 		return w
 	}
-	header := func(l uint64) []byte { return binary.AppendUvarint(nil, l) }
+	// Oversize requests carry body bytes after the length prefix, as a real
+	// client's would; a bare prefix can end in io.EOF and get a 400 instead.
+	oversize := func(l uint64) []byte {
+		return append(binary.AppendUvarint(nil, l), make([]byte, 32)...)
+	}
+	echo := func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+		return req, nil
+	}
+	echoCall := &pb.Call{Id: 3, Method: "srv.http.echo", Argument: srvMarshal(t, &pb.Error{Message: "hi"})}
+	echoBody, err := marshalAppendLengthDelimited(nil, echoCall)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	s := NewHTTPServer(zap.NewNop())
-	s.RegisterMethod("srv.http.echo", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
-		return req, nil
-	})
+	s.RegisterMethod("srv.http.echo", echo)
 
 	t.Run("default cap", func(t *testing.T) {
-		if w := serve(s, header(defaultMaxMessageBytes+1)); w.Code != http.StatusRequestEntityTooLarge {
+		if w := serve(s, oversize(defaultMaxMessageBytes+1)); w.Code != http.StatusRequestEntityTooLarge {
 			t.Errorf("got %d, want 413", w.Code)
 		}
 	})
 
 	t.Run("length overflows int", func(t *testing.T) {
-		if w := serve(s, header(1<<63)); w.Code != http.StatusRequestEntityTooLarge {
+		if w := serve(s, oversize(1<<63)); w.Code != http.StatusRequestEntityTooLarge {
 			t.Errorf("got %d, want 413", w.Code)
 		}
 	})
 
 	t.Run("custom cap", func(t *testing.T) {
 		s := NewHTTPServer(zap.NewNop())
-		s.MaxMessageBytes = 16
-		if w := serve(s, header(17)); w.Code != http.StatusRequestEntityTooLarge {
-			t.Errorf("got %d, want 413", w.Code)
+		s.RegisterMethod("srv.http.echo", echo)
+		size := proto.Size(echoCall)
+
+		s.MaxMessageBytes = size
+		if w := serve(s, echoBody); w.Code != http.StatusOK {
+			t.Errorf("message of exactly the cap (%d bytes): got %d (%s), want 200", size, w.Code, w.Body.String())
 		}
-		if w := serve(s, append(header(16), make([]byte, 16)...)); w.Code == http.StatusRequestEntityTooLarge {
-			t.Errorf("message at the cap was rejected with 413")
+		s.MaxMessageBytes = size - 1
+		if w := serve(s, echoBody); w.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("message one byte over the cap: got %d, want 413", w.Code)
 		}
 	})
 
 	t.Run("within cap", func(t *testing.T) {
-		arg, err := proto.Marshal(&pb.Error{Message: "hi"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := marshalAppendLengthDelimited(nil, &pb.Call{Id: 3, Method: "srv.http.echo", Argument: arg})
-		if err != nil {
-			t.Fatal(err)
-		}
-		w := serve(s, body)
+		w := serve(s, echoBody)
 		if w.Code != http.StatusOK {
 			t.Fatalf("got %d (%s), want 200", w.Code, w.Body.String())
 		}
@@ -226,4 +234,115 @@ func TestSrvHTTPSizeCap(t *testing.T) {
 			t.Errorf("got kind=%v message=%q (%v), want DEFAULT \"hi\"", res.Kind, out.Message, err)
 		}
 	})
+}
+
+func TestSrvHTTPTrailingData(t *testing.T) {
+	s := NewHTTPServer(zap.NewNop())
+	var called atomic.Bool
+	s.RegisterMethod("srv.http.trailing", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+		called.Store(true)
+		return &pb.Error{}, nil
+	})
+
+	body, err := marshalAppendLengthDelimited(nil, &pb.Call{Id: 1, Method: "srv.http.trailing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("POST", "/", bytes.NewReader(append(body, 1, 2, 3))))
+
+	if w.Code != http.StatusBadRequest || w.Body.String() != errHTTPTrailingData.Error() {
+		t.Errorf("got %d %q, want 400 %q", w.Code, w.Body.String(), errHTTPTrailingData)
+	}
+	if called.Load() {
+		t.Error("handler ran for a request with trailing data")
+	}
+}
+
+// srvLateEOFReader returns its data immediately but delays the EOF. As a
+// client request body it has no known length, so it is sent chunked, and the
+// terminating chunk reaches the server well after the message itself.
+type srvLateEOFReader struct {
+	r     io.Reader
+	delay time.Duration
+}
+
+func (r *srvLateEOFReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if err == io.EOF {
+		time.Sleep(r.delay)
+	}
+	return n, err
+}
+
+// On HTTP/1.1, net/http only notices a client disconnect (and cancels
+// r.Context()) once the request body has been read to EOF. A chunked body's
+// terminating chunk comes after the message, so ServeHTTP has to read past it.
+func TestSrvHTTPChunkedDisconnect(t *testing.T) {
+	s := NewHTTPServer(zap.NewNop())
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	s.RegisterMethod("srv.http.wait", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+		close(started)
+		select {
+		case <-ctx.Done():
+			close(cancelled)
+		case <-release:
+		}
+		return &pb.Error{}, nil
+	})
+
+	transferEncoding := make(chan []string, 1)
+	returned := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		transferEncoding <- r.TransferEncoding
+		s.ServeHTTP(w, r)
+		close(returned)
+	}))
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { close(release) }) // runs first, so a stuck handler can't block ts.Close
+
+	body, err := marshalAppendLengthDelimited(nil, &pb.Call{Id: 1, Method: "srv.http.wait"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "POST", ts.URL, &srvLateEOFReader{bytes.NewReader(body), 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() {
+		res, err := ts.Client().Do(req)
+		if err == nil {
+			res.Body.Close()
+		}
+		errc <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler never started")
+	}
+	if te := <-transferEncoding; len(te) != 1 || te[0] != "chunked" {
+		t.Fatalf("request transfer encoding %v, want chunked", te)
+	}
+
+	cancel() // client disconnects mid-call
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("handler ctx was not cancelled within 1s of the client disconnecting")
+	}
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("ServeHTTP did not return after the client disconnected")
+	}
+	if err := <-errc; err == nil {
+		t.Error("client request succeeded, want a cancellation error")
+	}
 }

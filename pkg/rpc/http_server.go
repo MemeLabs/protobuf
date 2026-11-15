@@ -26,9 +26,8 @@ func NewHTTPServer(logger *zap.Logger) *HTTPServer {
 type HTTPServer struct {
 	*ServiceDispatcher
 
-	// MaxMessageBytes caps the size of a request message; larger requests
-	// are rejected with 413. Values <= 0 use the RWDialer default (512 KiB).
-	// Set it before the server starts handling requests.
+	// MaxMessageBytes caps a request's message size; larger requests get a
+	// 413. <= 0 means the default, 512 KiB. Set it before serving.
 	MaxMessageBytes int
 }
 
@@ -51,6 +50,15 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b := make([]byte, l)
 	if _, err := io.ReadFull(r.Body, b); err != nil {
 		httpServeError(http.StatusBadRequest, err, w)
+		return
+	}
+
+	// Reading to EOF rejects trailing data and lets net/http detect a disconnect.
+	if n, err := io.Copy(io.Discard, io.LimitReader(r.Body, 1)); err != nil {
+		httpServeError(http.StatusBadRequest, err, w)
+		return
+	} else if n != 0 {
+		httpServeError(http.StatusBadRequest, errHTTPTrailingData, w)
 		return
 	}
 
@@ -78,7 +86,10 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-var errHTTPResponseClosed = errors.New("http response closed")
+var (
+	errHTTPResponseClosed = errors.New("http response closed")
+	errHTTPTrailingData   = errors.New("trailing data after message")
+)
 
 // httpResponseWriter serializes a call's writes to w and rejects them after
 // close.

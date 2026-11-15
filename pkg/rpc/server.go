@@ -42,7 +42,8 @@ type Server struct {
 	dialer Dialer
 }
 
-// Listen ...
+// Listen serves until ctx is done or the connection fails, then stops the
+// transport, closing its ReadWriter (see RWDialer), and returns promptly.
 func (s *Server) Listen(ctx context.Context) error {
 	transport, err := s.dialer.Dial(ctx, s.ServiceDispatcher)
 	if err != nil {

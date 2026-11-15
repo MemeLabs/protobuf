@@ -9,7 +9,6 @@ import (
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
@@ -76,11 +75,13 @@ func srvWait(t *testing.T, done <-chan struct{}) bool {
 }
 
 func srvCounter(c prometheus.Counter) float64 {
-	m := &dto.Metric{}
-	if err := c.Write(m); err != nil {
+	r := prometheus.NewPedanticRegistry()
+	r.MustRegister(c)
+	mfs, err := r.Gather()
+	if err != nil {
 		panic(err)
 	}
-	return m.GetCounter().GetValue()
+	return mfs[0].GetMetric()[0].GetCounter().GetValue()
 }
 
 func srvMarshal(t *testing.T, m proto.Message) []byte {
@@ -170,18 +171,25 @@ func TestSrvErrorMetrics(t *testing.T) {
 	d.RegisterMethod("srv.metrics.nilstream", func(ctx context.Context, req *pb.Error) (<-chan *pb.Error, error) {
 		return nil, nil
 	})
+	d.RegisterMethod("srv.metrics.badtype", func(ctx context.Context, req *pb.Error) (string, error) {
+		return "not a proto.Message", nil
+	})
 
 	cases := []struct {
 		name    string
 		method  string
 		arg     []byte
+		wantReq float64
 		wantErr float64
 	}{
-		{"ok", "srv.metrics.ok", nil, 0},
-		{"handler error", "srv.metrics.fail", nil, 1},
-		{"panic", "srv.metrics.panic", nil, 1},
-		{"nil stream", "srv.metrics.nilstream", nil, 1},
-		{"bad argument", "srv.metrics.ok", []byte{0x0a, 0x05}, 1}, // truncated field
+		{"ok", "srv.metrics.ok", nil, 1, 0},
+		{"handler error", "srv.metrics.fail", nil, 1, 1},
+		{"panic", "srv.metrics.panic", nil, 1, 1},
+		{"nil stream", "srv.metrics.nilstream", nil, 1, 1},
+		{"unexpected response type", "srv.metrics.badtype", nil, 1, 1},
+		{"bad argument", "srv.metrics.ok", []byte{0x0a, 0x05}, 1, 1}, // truncated field
+		// unknown methods have no per-method series; nothing is counted
+		{"method not found", "srv.metrics.missing", nil, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -195,8 +203,8 @@ func TestSrvErrorMetrics(t *testing.T) {
 				return
 			}
 
-			if dr, de := srvCounter(reqs)-r0, srvCounter(errs)-e0; dr != 1 || de != c.wantErr {
-				t.Errorf("request_count +%v error_count +%v, want +1 +%v", dr, de, c.wantErr)
+			if dr, de := srvCounter(reqs)-r0, srvCounter(errs)-e0; dr != c.wantReq || de != c.wantErr {
+				t.Errorf("request_count +%v error_count +%v, want +%v +%v", dr, de, c.wantReq, c.wantErr)
 			}
 		})
 	}
