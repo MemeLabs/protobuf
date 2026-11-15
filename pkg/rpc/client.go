@@ -28,7 +28,9 @@ var (
 	}, []string{"method"})
 )
 
-// NewClient ...
+// NewClient dials a transport and listens on it. The client owns the
+// transport and stops it on Close or when garbage collected. Calls pending
+// when the transport stops, or made after, fail with ErrTransportClosed.
 func NewClient(logger *zap.Logger, dialer Dialer) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -70,7 +72,8 @@ type Client struct {
 	cancel    context.CancelFunc
 }
 
-// Close ...
+// Close stops the client's transport without waiting for it to finish.
+// Pending and later calls fail with ErrTransportClosed.
 func (c *Client) Close() {
 	c.cancel()
 }
@@ -88,7 +91,7 @@ func (c *Client) handleError(call *CallOut, err error) error {
 		clientErrorCount.WithLabelValues(call.Method()).Inc()
 	}
 
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrStreamBufferFull) {
 		if err := c.forwardCancel(call); err != nil {
 			c.logger.Debug("forwarding request cancellation failed", zap.Error(err))
 		}
@@ -130,16 +133,16 @@ func (c *Client) CallStreaming(ctx context.Context, method string, req proto.Mes
 
 type clientDispatcher struct{}
 
+// Dispatch hands callbacks to their pending call and drops all other frames,
+// including late callbacks. It runs on the read loop, so it must not block.
 func (c *clientDispatcher) Dispatch(call *CallIn, done func()) {
+	defer done()
+
 	if call.Method() != callbackMethod {
 		return
 	}
 
-	parent := call.ParentCallOut()
-	if parent == nil {
-		return
+	if parent := call.ParentCallOut(); parent != nil {
+		parent.AssignResponse(call)
 	}
-
-	parent.AssignResponse(call)
-	done()
 }

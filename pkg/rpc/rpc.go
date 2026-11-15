@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"sync"
 
 	// "sync"
@@ -41,6 +42,19 @@ var ErrClose = errors.New("response closed")
 // ErrInvalidType returned when the request or response type doesn't match the
 // expected value
 var ErrInvalidType = errors.New("invaild type")
+
+// ErrTransportClosed is returned, wrapped with the cause, by calls pending
+// when a transport stops and by calls made after it has stopped.
+var ErrTransportClosed = errors.New("rpc: transport closed")
+
+// ErrStreamBufferFull is returned by a call whose unread responses exceeded
+// RWDialer.MaxStreamBufferBytes. The client also cancels the call on the
+// server.
+var ErrStreamBufferFull = errors.New("rpc: stream response buffer full")
+
+func transportClosedError(cause error) error {
+	return fmt.Errorf("%w: %v", ErrTransportClosed, cause)
+}
 
 func unmarshalResponse(kind pb.Call_Kind, b []byte, v proto.Message) error {
 	switch kind {
@@ -104,7 +118,11 @@ type ResponseFunc func() error
 
 // Transport ...
 type Transport interface {
+	// Call sends call and then runs fn, which reads its responses.
 	Call(*CallOut, ResponseFunc) error
+	// Listen reads and dispatches incoming frames until the context passed to
+	// Dial is done or reading fails, and returns promptly. Pending and later
+	// calls then fail with ErrTransportClosed.
 	Listen() error
 }
 

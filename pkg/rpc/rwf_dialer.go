@@ -8,7 +8,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// RWFDialer ...
+// RWFDialer dials a Transport like RWDialer, with its default limits, that
+// flushes ReadWriteFlusher after each frame.
+//
+// As with RWDialer, the transport owns ReadWriteFlusher: when the transport
+// stops (its dial context is done, e.g. Client.Close or cancelling the
+// context passed to Server.Listen, or reading fails) it closes
+// ReadWriteFlusher if it also implements io.Closer.
 type RWFDialer struct {
 	Logger           *zap.Logger
 	ReadWriteFlusher ReadWriteFlusher
@@ -36,6 +42,15 @@ func (r *rwfWriteFlusher) Write(p []byte) (int, error) {
 		return n, err
 	}
 	return n, r.ReadWriteFlusher.Flush()
+}
+
+// Close closes the wrapped ReadWriteFlusher if it is an io.Closer; embedding
+// ReadWriteFlusher doesn't promote Close.
+func (r *rwfWriteFlusher) Close() error {
+	if c, ok := r.ReadWriteFlusher.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 // ReadWriteFlusher ...

@@ -57,6 +57,9 @@ func NewCallBase(ctx context.Context) CallBase {
 }
 
 // CallBase ...
+//
+// The cancelable context is created lazily: outside init, use Context and
+// Cancel, never ctx and cancel, which would race with init.
 type CallBase struct {
 	initOnce sync.Once
 	ctx      context.Context
@@ -120,7 +123,7 @@ func (c *CallIn) Argument(arg proto.Message) error {
 
 func (c *CallIn) sendResponse(kind pb.Call_Kind, res proto.Message) error {
 	id := atomic.AddUint64(nextID, 1)
-	if err := send(c.ctx, id, c.req.Id, callbackMethod, kind, res, c.send); err != nil {
+	if err := send(c.Context(), id, c.req.Id, callbackMethod, kind, res, c.send); err != nil {
 		return err
 	}
 	return nil
@@ -129,7 +132,7 @@ func (c *CallIn) sendResponse(kind pb.Call_Kind, res proto.Message) error {
 func (c *CallIn) returnUndefined() {
 	c.responseType = ResponseTypeUndefined
 	c.sendResponse(pb.Call_CALL_KIND_UNDEFINED, &pb.Undefined{})
-	c.cancel()
+	c.Cancel()
 }
 
 func (c *CallIn) returnError(err error) {
@@ -138,17 +141,18 @@ func (c *CallIn) returnError(err error) {
 		Message: err.Error(),
 		Code:    ErrorCode(err),
 	})
-	c.cancel()
+	c.Cancel()
 }
 
 func (c *CallIn) returnValue(v proto.Message) {
 	c.responseType = ResponseTypeValue
 	c.sendResponse(pb.Call_CALL_KIND_DEFAULT, v)
-	c.cancel()
+	c.Cancel()
 }
 
 func (c *CallIn) returnStream(v interface{}) {
 	c.responseType = ResponseTypeStream
+	ctx := c.Context()
 
 	cases := []reflect.SelectCase{
 		{
@@ -157,31 +161,35 @@ func (c *CallIn) returnStream(v interface{}) {
 		},
 		{
 			Dir:  reflect.SelectRecv,
-			Chan: reflect.ValueOf(c.ctx.Done()),
+			Chan: reflect.ValueOf(ctx.Done()),
 		},
 	}
 
 	for {
 		_, v, ok := reflect.Select(cases)
 
-		if c.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 
 		if !ok {
 			c.sendResponse(pb.Call_CALL_KIND_CLOSE, &pb.Close{})
-			c.cancel()
+			c.Cancel()
 			return
 		}
 
 		if err := c.sendResponse(pb.Call_CALL_KIND_DEFAULT, v.Interface().(proto.Message)); err != nil {
-			c.cancel()
+			c.Cancel()
 			return
 		}
 	}
 }
 
 var emptyCallOut = &CallOut{}
+
+// queueEntryOverhead is the per-response cost, on top of the argument bytes,
+// charged against a CallOut's response buffer limit.
+const queueEntryOverhead = 64
 
 // NewCallOut ...
 func NewCallOut(ctx context.Context, method string, arg proto.Message) (*CallOut, error) {
@@ -196,18 +204,31 @@ func NewCallOutWithParent(ctx context.Context, method string, arg proto.Message,
 		parentID: parent.ID(),
 		method:   method,
 		arg:      arg,
-		res:      make(chan *pb.Call),
+		notify:   make(chan struct{}, 1),
+		aborted:  make(chan struct{}),
 	}, nil
 }
 
-// CallOut ...
+// CallOut is an outgoing call.
+//
+// AssignResponse queues responses per call and never blocks, so a slow reader
+// only delays its own call. When maxQueueBytes is positive, a response that
+// arrives while the queue is not empty and would take it over that limit
+// discards the queue and fails the call with ErrStreamBufferFull.
 type CallOut struct {
 	CallBase
 	id       uint64
 	parentID uint64
 	method   string
 	arg      proto.Message
-	res      chan *pb.Call
+
+	mu            sync.Mutex
+	queue         []*pb.Call
+	queueBytes    int
+	maxQueueBytes int
+	err           error
+	notify        chan struct{} // signalled when queue or err changes
+	aborted       chan struct{} // closed when the buffer overflows
 }
 
 // ID ...
@@ -222,30 +243,115 @@ func (c *CallOut) Method() string {
 
 // SendRequest ...
 func (c *CallOut) SendRequest(fn SendFunc) error {
-	return send(c.ctx, c.id, c.parentID, c.method, pb.Call_CALL_KIND_DEFAULT, c.arg, fn)
+	return send(c.Context(), c.id, c.parentID, c.method, pb.Call_CALL_KIND_DEFAULT, c.arg, fn)
 }
 
-// AssignResponse ...
+// setMaxQueueBytes sets the response buffer limit. n <= 0 means unbounded.
+func (c *CallOut) setMaxQueueBytes(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxQueueBytes = n
+}
+
+// AssignResponse queues a response for ReadResponse. It never blocks.
 func (c *CallOut) AssignResponse(res *CallIn) {
-	select {
-	case c.res <- res.req:
-	case <-c.ctx.Done():
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.err != nil {
+		return
 	}
+
+	n := len(res.req.Argument) + queueEntryOverhead
+	if c.maxQueueBytes > 0 && len(c.queue) > 0 && c.queueBytes+n > c.maxQueueBytes {
+		c.queue = nil
+		c.queueBytes = 0
+		c.failLocked(ErrStreamBufferFull)
+		close(c.aborted)
+		return
+	}
+
+	c.queue = append(c.queue, res.req)
+	c.queueBytes += n
+	c.signalLocked()
+}
+
+// fail ends the call with err once the responses already queued are read.
+func (c *CallOut) fail(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failLocked(err)
+}
+
+func (c *CallOut) failLocked(err error) {
+	if c.err == nil {
+		c.err = err
+		c.signalLocked()
+	}
+}
+
+func (c *CallOut) signalLocked() {
+	select {
+	case c.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (c *CallOut) failure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
+}
+
+// nextResponse pops the oldest queued response. If the queue is empty it
+// returns the call's terminal error, which is nil while the call is live.
+func (c *CallOut) nextResponse() (*pb.Call, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if len(c.queue) == 0 {
+		return nil, c.err
+	}
+
+	r := c.queue[0]
+	c.queue[0] = nil
+	c.queue = c.queue[1:]
+	if len(c.queue) == 0 {
+		c.queue = nil
+	}
+	c.queueBytes -= len(r.Argument) + queueEntryOverhead
+	return r, nil
 }
 
 // ReadResponse ...
 func (c *CallOut) ReadResponse(out proto.Message) error {
-	select {
-	case r := <-c.res:
-		return unmarshalResponse(r.Kind, r.Argument, out)
-	case <-c.ctx.Done():
-		return c.ctx.Err()
+	ctx := c.Context()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		r, err := c.nextResponse()
+		if r != nil {
+			return unmarshalResponse(r.Kind, r.Argument, out)
+		}
+		if err != nil {
+			return err
+		}
+
+		select {
+		case <-c.notify:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
 var typeOfProtoMessage = reflect.TypeOf((*proto.Message)(nil)).Elem()
 
-// ReadResponseStream ...
+// ReadResponseStream sends responses to res, a chan of a proto.Message type,
+// until the stream closes, the call fails or its context is done, and then
+// closes res. A reader may stop reading once it cancels the context.
 func (c *CallOut) ReadResponseStream(res interface{}) error {
 	ch := reflect.ValueOf(res)
 	if ch.Kind() != reflect.Chan || !ch.Type().Elem().Implements(typeOfProtoMessage) {
@@ -253,6 +359,13 @@ func (c *CallOut) ReadResponseStream(res interface{}) error {
 	}
 
 	defer ch.Close()
+
+	ctx := c.Context()
+	cases := []reflect.SelectCase{
+		{Dir: reflect.SelectSend, Chan: ch},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(c.aborted)},
+	}
 
 	for {
 		v := reflect.New(ch.Type().Elem().Elem())
@@ -262,6 +375,13 @@ func (c *CallOut) ReadResponseStream(res interface{}) error {
 		} else if err != nil {
 			return err
 		}
-		ch.Send(v)
+
+		cases[0].Send = v
+		switch chosen, _, _ := reflect.Select(cases); chosen {
+		case 1:
+			return ctx.Err()
+		case 2:
+			return c.failure()
+		}
 	}
 }
