@@ -188,15 +188,11 @@ func (c *CallIn) returnStream(v interface{}) {
 
 var emptyCallOut = &CallOut{}
 
-// Costs charged against a CallOut's response buffer limit on top of each
-// response's encoded frame size, rounded up from the heap measured for
-// decoded responses: about 120 bytes beyond the encoded size per response
-// (the pb.Call, its Method string and its queue slot), and for Headers about
-// 400 bytes per map plus 100 per entry.
+// Coarse allowances counted against the stream buffer limit on top of each
+// queued response's encoded size.
 const (
-	queueEntryOverhead  = 160
-	headersMapOverhead  = 512
-	headerEntryOverhead = 128
+	queuedResponseOverhead = 256 // per response
+	queuedHeaderOverhead   = 128 // per header entry
 )
 
 // NewCallOut ...
@@ -218,13 +214,10 @@ func NewCallOutWithParent(ctx context.Context, method string, arg proto.Message,
 	}, nil
 }
 
-// CallOut is an outgoing call.
-//
-// AssignResponse queues responses per call and never blocks, so a slow reader
-// only delays its own call. When maxQueueBytes is positive, a response that
-// arrives while the queue is not empty and would take it over that limit
-// discards the queue and fails the call with ErrStreamBufferFull. The limit
-// defaults to 16 MiB; RWTransport sets it from RWDialer.MaxStreamBufferBytes.
+// CallOut is an outgoing call. AssignResponse queues its responses without
+// blocking. A response that would take a non-empty queue over maxQueueBytes
+// (16 MiB by default; <= 0 means unbounded), counted by responseCost,
+// discards the queue and fails the call with ErrStreamBufferFull.
 type CallOut struct {
 	CallBase
 	id       uint64
@@ -246,18 +239,14 @@ type queuedResponse struct {
 	cost int
 }
 
-// responseCost is what a queued response is charged against the buffer
-// limit: its encoded size, as received if known, plus the fixed overheads.
+// responseCost is what a queued response counts against maxQueueBytes: its
+// encoded size plus the per-response and per-header allowances.
 func responseCost(res *CallIn) int {
 	n := res.frameBytes
 	if n == 0 {
 		n = proto.Size(res.req)
 	}
-	n += queueEntryOverhead
-	if h := len(res.req.Headers); h > 0 {
-		n += headersMapOverhead + h*headerEntryOverhead
-	}
-	return n
+	return n + queuedResponseOverhead + len(res.req.Headers)*queuedHeaderOverhead
 }
 
 // ID ...

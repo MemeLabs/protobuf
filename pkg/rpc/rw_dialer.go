@@ -31,13 +31,10 @@ type RWDialer struct {
 	Logger          *zap.Logger
 	ReadWriter      io.ReadWriter
 	MaxMessageBytes int
-	// MaxStreamBufferBytes limits, per outgoing call, the bytes of responses
-	// that have been received but not yet read by the caller (each counted
-	// as its encoded frame plus a fixed per-response overhead). A response
-	// that would take a non-empty backlog over the limit fails that call with
-	// ErrStreamBufferFull, and the client forwards a cancellation to the
-	// server; other calls are unaffected. 0 means the default, the larger of
-	// 16 MiB and 4×MaxMessageBytes; a negative value means unbounded.
+	// MaxStreamBufferBytes approximately limits each outgoing call's unread
+	// responses; exceeding it fails the call with ErrStreamBufferFull. 0 means
+	// the default, the larger of 16 MiB and 4×MaxMessageBytes; negative means
+	// unbounded.
 	MaxStreamBufferBytes int
 }
 

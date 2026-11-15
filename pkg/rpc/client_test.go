@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -606,6 +607,42 @@ func TestCliStreamBufferCountsWholeFrame(t *testing.T) {
 		if err := c.serverT.send(context.Background(), res); err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	if err := cliWaitErr(t, errc, 2*time.Second, "CallStreaming"); !errors.Is(err, ErrStreamBufferFull) {
+		t.Fatalf("CallStreaming returned %v, want ErrStreamBufferFull", err)
+	}
+}
+
+// Tiny headers take far more memory decoded than on the wire, so the limit
+// must charge for them: 50 frames of 1000 one-byte headers are about 500 KB
+// on the wire, under the 1 MiB limit, but hold several times that.
+func TestCliStreamBufferCountsTinyHeaders(t *testing.T) {
+	c := cliNewConn(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("silent", cliSilentStream)
+	}, func(d *RWDialer) {
+		d.MaxStreamBufferBytes = 1 << 20
+	})
+
+	ch := make(chan *pb.Error) // never read
+	errc := make(chan error, 1)
+	go func() { errc <- c.client.CallStreaming(context.Background(), "silent", &pb.Error{}, ch) }()
+	call := cliFindCallOut(t, c.clientT)
+
+	hdr := map[string][]byte{}
+	for i := 0; i < 1000; i++ {
+		hdr[strconv.Itoa(i)] = []byte{1}
+	}
+	wire := 0
+	for i := 0; i < 50; i++ {
+		res := &pb.Call{Id: uint64(1<<40 + i), ParentId: call.ID(), Method: callbackMethod, Headers: hdr}
+		wire += proto.Size(res)
+		if err := c.serverT.send(context.Background(), res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if wire >= 1<<20 {
+		t.Fatalf("frames total %d bytes on the wire; the test needs them under the limit", wire)
 	}
 
 	if err := cliWaitErr(t, errc, 2*time.Second, "CallStreaming"); !errors.Is(err, ErrStreamBufferFull) {
