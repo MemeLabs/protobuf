@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"text/template"
 
@@ -40,11 +41,35 @@ func (p *GoRPCModule) Name() string { return "gorpc" }
 
 // Execute ...
 func (p *GoRPCModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.Package) []pgs.Artifact {
+	ok := true
+	for _, t := range targets {
+		ok = p.checkMethods(t) && ok
+	}
+	if !ok {
+		return p.Artifacts()
+	}
+
 	for _, t := range targets {
 		p.generate(t)
 	}
 
 	return p.Artifacts()
+}
+
+// checkMethods reports an error for each of f's client-streaming (or
+// bidirectional) methods, which pkg/rpc doesn't support, and returns false
+// if there were any.
+func (p *GoRPCModule) checkMethods(f pgs.File) bool {
+	ok := true
+	for _, s := range f.Services() {
+		for _, m := range s.Methods() {
+			if m.ClientStreaming() {
+				p.AddError(fmt.Sprintf("%s: %s.%s: client-streaming methods are not supported (only unary and server-streaming)", f.InputPath(), p.fullName(s), m.Name()))
+				ok = false
+			}
+		}
+	}
+	return ok
 }
 
 func (p *GoRPCModule) generate(f pgs.File) {
@@ -93,7 +118,7 @@ func Register{{$svcName}}Service(host rpc.ServiceRegistry, service {{$svcName}}S
   ) ({{if .ServerStreaming}}<-chan {{end}}*{{.Output.Name.UpperCamelCase}}, error)
 {{end}}}
 
-// {{$svcName}}Service ...
+// Unimplemented{{$svcName}}Service ...
 type Unimplemented{{$svcName}}Service struct {}
 {{range .Methods}}
 func (s *Unimplemented{{$svcName}}Service) {{.Name.UpperCamelCase}} (

@@ -29,6 +29,16 @@ func (p *TSRPCModule) Name() string { return "tsrpc" }
 
 // Execute ...
 func (p *TSRPCModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.Package) []pgs.Artifact {
+	ok := true
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files() {
+			ok = p.checkMethods(f) && ok
+		}
+	}
+	if !ok {
+		return p.Artifacts()
+	}
+
 	for _, pkg := range pkgs {
 		for _, f := range pkg.Files() {
 			if len(f.Services()) != 0 {
@@ -38,6 +48,22 @@ func (p *TSRPCModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.P
 	}
 
 	return p.Artifacts()
+}
+
+// checkMethods reports an error for each of f's client-streaming (or
+// bidirectional) methods, which src/rpc doesn't support, and returns false
+// if there were any.
+func (p *TSRPCModule) checkMethods(f pgs.File) bool {
+	ok := true
+	for _, s := range f.Services() {
+		for _, m := range s.Methods() {
+			if m.ClientStreaming() {
+				p.AddError(fmt.Sprintf("%s: %s.%s: client-streaming methods are not supported (only unary and server-streaming)", f.InputPath(), strings.TrimPrefix(s.FullyQualifiedName(), "."), m.Name()))
+				ok = false
+			}
+		}
+	}
+	return ok
 }
 
 func (p *TSRPCModule) generate(f pgs.File) {

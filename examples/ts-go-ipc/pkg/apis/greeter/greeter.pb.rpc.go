@@ -19,7 +19,7 @@ type GreeterService interface {
 	) (*GreetResponse, error)
 }
 
-// GreeterService ...
+// UnimplementedGreeterService ...
 type UnimplementedGreeterService struct{}
 
 func (s *UnimplementedGreeterService) Greet(

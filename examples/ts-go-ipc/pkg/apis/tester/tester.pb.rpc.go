@@ -24,7 +24,7 @@ type TesterService interface {
 	) (<-chan *StreamResponse, error)
 }
 
-// TesterService ...
+// UnimplementedTesterService ...
 type UnimplementedTesterService struct{}
 
 func (s *UnimplementedTesterService) Unary(

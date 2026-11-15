@@ -19,7 +19,7 @@ type TickerService interface {
 	) (<-chan *TickResponse, error)
 }
 
-// TickerService ...
+// UnimplementedTickerService ...
 type UnimplementedTickerService struct{}
 
 func (s *UnimplementedTickerService) Tick(

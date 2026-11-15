@@ -24,7 +24,7 @@ type RPCTestService interface {
 	) (<-chan *RPCCallStreamResponse, error)
 }
 
-// RPCTestService ...
+// UnimplementedRPCTestService ...
 type UnimplementedRPCTestService struct{}
 
 func (s *UnimplementedRPCTestService) CallUnary(
