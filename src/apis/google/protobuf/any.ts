@@ -303,9 +303,3 @@ export class Any {
   }
 }
 
-/* @internal */
-export const google_protobuf_Any = Any;
-/* @internal */
-export type google_protobuf_Any = Any;
-/* @internal */
-export type google_protobuf_IAny = IAny;

@@ -2,12 +2,12 @@ import Reader from "../../../pb/reader";
 import Writer from "../../../pb/writer";
 
 import {
-  strims_test_internal_Bar_Foo_Bar,
-  strims_test_internal_Bar_Foo_IBar,
-  strims_test_internal_Foo,
-  strims_test_internal_IFoo,
-  strims_test_internal_Bar_Foo,
-  strims_test_internal_Bar_IFoo,
+  Bar_Foo_Bar as strims_test_internal_Bar_Foo_Bar,
+  type Bar_Foo_IBar as strims_test_internal_Bar_Foo_IBar,
+  Foo as strims_test_internal_Foo,
+  type IFoo as strims_test_internal_IFoo,
+  Bar_Foo as strims_test_internal_Bar_Foo,
+  type Bar_IFoo as strims_test_internal_Bar_IFoo,
 } from "./internal/internal";
 
 export type ITestMessage = {
@@ -18,7 +18,7 @@ export type ITestMessage = {
   sint32Value?: number;
   sint64Value?: bigint;
   boolValue?: boolean;
-  enumValue?: strims_test_TestMessage_TestEnum;
+  enumValue?: TestMessage_TestEnum;
   fixed64Value?: bigint;
   sfixed64Value?: bigint;
   doubleValue?: number;
@@ -27,24 +27,24 @@ export type ITestMessage = {
   fixed32Value?: number;
   sfixedValue?: number;
   floatValue?: number;
-  embeddedMessageValue?: strims_test_TestMessage_IEmbeddedMessage;
-  siblingMessageValue?: strims_test_ISiblingMessage;
+  embeddedMessageValue?: TestMessage_IEmbeddedMessage;
+  siblingMessageValue?: ISiblingMessage;
   stringInt32MapValue?: Map<string, number> | { [key: string]: number };
   stringInt64MapValue?: Map<string, bigint> | { [key: string]: bigint };
   stringStringMapValue?: Map<string, string> | { [key: string]: string };
-  stringEmbeddedMessageMapValue?: Map<string, strims_test_TestMessage_IEmbeddedMessage> | { [key: string]: strims_test_TestMessage_IEmbeddedMessage };
+  stringEmbeddedMessageMapValue?: Map<string, TestMessage_IEmbeddedMessage> | { [key: string]: TestMessage_IEmbeddedMessage };
   int32Int32MapValue?: Map<number, number> | { [key: number]: number };
   int32Int64MapValue?: Map<number, bigint> | { [key: number]: bigint };
   int32StringMapValue?: Map<number, string> | { [key: number]: string };
-  int32EmbeddedMessageMapValue?: Map<number, strims_test_TestMessage_IEmbeddedMessage> | { [key: number]: strims_test_TestMessage_IEmbeddedMessage };
+  int32EmbeddedMessageMapValue?: Map<number, TestMessage_IEmbeddedMessage> | { [key: number]: TestMessage_IEmbeddedMessage };
   int64Int32MapValue?: Map<bigint, number>;
   int64Int64MapValue?: Map<bigint, bigint>;
   int64StringMapValue?: Map<bigint, string>;
-  int64EmbeddedMessageMapValue?: Map<bigint, strims_test_TestMessage_EmbeddedMessage>;
+  int64EmbeddedMessageMapValue?: Map<bigint, TestMessage_EmbeddedMessage>;
   repeatedInt32MapValue?: number[];
   repeatedInt64MapValue?: bigint[];
   repeatedStringMapValue?: string[];
-  repeatedEmbeddedMessageMapValue?: strims_test_TestMessage_IEmbeddedMessage[];
+  repeatedEmbeddedMessageMapValue?: TestMessage_IEmbeddedMessage[];
 }
 
 export class TestMessage {
@@ -55,7 +55,7 @@ export class TestMessage {
   sint32Value: number;
   sint64Value: bigint;
   boolValue: boolean;
-  enumValue: strims_test_TestMessage_TestEnum;
+  enumValue: TestMessage_TestEnum;
   fixed64Value: bigint;
   sfixed64Value: bigint;
   doubleValue: number;
@@ -64,24 +64,24 @@ export class TestMessage {
   fixed32Value: number;
   sfixedValue: number;
   floatValue: number;
-  embeddedMessageValue: strims_test_TestMessage_EmbeddedMessage | undefined;
-  siblingMessageValue: strims_test_SiblingMessage | undefined;
+  embeddedMessageValue: TestMessage_EmbeddedMessage | undefined;
+  siblingMessageValue: SiblingMessage | undefined;
   stringInt32MapValue: Map<string, number>;
   stringInt64MapValue: Map<string, bigint>;
   stringStringMapValue: Map<string, string>;
-  stringEmbeddedMessageMapValue: Map<string, strims_test_TestMessage_EmbeddedMessage>;
+  stringEmbeddedMessageMapValue: Map<string, TestMessage_EmbeddedMessage>;
   int32Int32MapValue: Map<number, number>;
   int32Int64MapValue: Map<number, bigint>;
   int32StringMapValue: Map<number, string>;
-  int32EmbeddedMessageMapValue: Map<number, strims_test_TestMessage_EmbeddedMessage>;
+  int32EmbeddedMessageMapValue: Map<number, TestMessage_EmbeddedMessage>;
   int64Int32MapValue: Map<bigint, number>;
   int64Int64MapValue: Map<bigint, bigint>;
   int64StringMapValue: Map<bigint, string>;
-  int64EmbeddedMessageMapValue: Map<bigint, strims_test_TestMessage_EmbeddedMessage>;
+  int64EmbeddedMessageMapValue: Map<bigint, TestMessage_EmbeddedMessage>;
   repeatedInt32MapValue: number[];
   repeatedInt64MapValue: bigint[];
   repeatedStringMapValue: string[];
-  repeatedEmbeddedMessageMapValue: strims_test_TestMessage_EmbeddedMessage[];
+  repeatedEmbeddedMessageMapValue: TestMessage_EmbeddedMessage[];
 
   constructor(v?: ITestMessage) {
     this.int32Value = v?.int32Value || 0;
@@ -100,36 +100,36 @@ export class TestMessage {
     this.fixed32Value = v?.fixed32Value || 0;
     this.sfixedValue = v?.sfixedValue || 0;
     this.floatValue = v?.floatValue || 0;
-    this.embeddedMessageValue = v?.embeddedMessageValue && new strims_test_TestMessage_EmbeddedMessage(v.embeddedMessageValue);
-    this.siblingMessageValue = v?.siblingMessageValue && new strims_test_SiblingMessage(v.siblingMessageValue);
+    this.embeddedMessageValue = v?.embeddedMessageValue && new TestMessage_EmbeddedMessage(v.embeddedMessageValue);
+    this.siblingMessageValue = v?.siblingMessageValue && new SiblingMessage(v.siblingMessageValue);
     if (v?.stringInt32MapValue) this.stringInt32MapValue = new Map(v.stringInt32MapValue instanceof Map ? v.stringInt32MapValue : Object.entries(v.stringInt32MapValue).map(([k, v]) => [String(k), v]));
     else this.stringInt32MapValue = new Map<string, number>();
     if (v?.stringInt64MapValue) this.stringInt64MapValue = new Map(v.stringInt64MapValue instanceof Map ? v.stringInt64MapValue : Object.entries(v.stringInt64MapValue).map(([k, v]) => [String(k), v]));
     else this.stringInt64MapValue = new Map<string, bigint>();
     if (v?.stringStringMapValue) this.stringStringMapValue = new Map(v.stringStringMapValue instanceof Map ? v.stringStringMapValue : Object.entries(v.stringStringMapValue).map(([k, v]) => [String(k), v]));
     else this.stringStringMapValue = new Map<string, string>();
-    if (v?.stringEmbeddedMessageMapValue) this.stringEmbeddedMessageMapValue = new Map(v.stringEmbeddedMessageMapValue instanceof Map ? Array.from(v.stringEmbeddedMessageMapValue).map(([k, v]) => [k, new strims_test_TestMessage_EmbeddedMessage(v)]) : Object.entries(v.stringEmbeddedMessageMapValue).map(([k, v]) => [String(k), new strims_test_TestMessage_EmbeddedMessage(v)]));
-    else this.stringEmbeddedMessageMapValue = new Map<string, strims_test_TestMessage_EmbeddedMessage>();
+    if (v?.stringEmbeddedMessageMapValue) this.stringEmbeddedMessageMapValue = new Map(v.stringEmbeddedMessageMapValue instanceof Map ? Array.from(v.stringEmbeddedMessageMapValue).map(([k, v]) => [k, new TestMessage_EmbeddedMessage(v)]) : Object.entries(v.stringEmbeddedMessageMapValue).map(([k, v]) => [String(k), new TestMessage_EmbeddedMessage(v)]));
+    else this.stringEmbeddedMessageMapValue = new Map<string, TestMessage_EmbeddedMessage>();
     if (v?.int32Int32MapValue) this.int32Int32MapValue = new Map(v.int32Int32MapValue instanceof Map ? v.int32Int32MapValue : Object.entries(v.int32Int32MapValue).map(([k, v]) => [Number(k), v]));
     else this.int32Int32MapValue = new Map<number, number>();
     if (v?.int32Int64MapValue) this.int32Int64MapValue = new Map(v.int32Int64MapValue instanceof Map ? v.int32Int64MapValue : Object.entries(v.int32Int64MapValue).map(([k, v]) => [Number(k), v]));
     else this.int32Int64MapValue = new Map<number, bigint>();
     if (v?.int32StringMapValue) this.int32StringMapValue = new Map(v.int32StringMapValue instanceof Map ? v.int32StringMapValue : Object.entries(v.int32StringMapValue).map(([k, v]) => [Number(k), v]));
     else this.int32StringMapValue = new Map<number, string>();
-    if (v?.int32EmbeddedMessageMapValue) this.int32EmbeddedMessageMapValue = new Map(v.int32EmbeddedMessageMapValue instanceof Map ? Array.from(v.int32EmbeddedMessageMapValue).map(([k, v]) => [k, new strims_test_TestMessage_EmbeddedMessage(v)]) : Object.entries(v.int32EmbeddedMessageMapValue).map(([k, v]) => [Number(k), new strims_test_TestMessage_EmbeddedMessage(v)]));
-    else this.int32EmbeddedMessageMapValue = new Map<number, strims_test_TestMessage_EmbeddedMessage>();
+    if (v?.int32EmbeddedMessageMapValue) this.int32EmbeddedMessageMapValue = new Map(v.int32EmbeddedMessageMapValue instanceof Map ? Array.from(v.int32EmbeddedMessageMapValue).map(([k, v]) => [k, new TestMessage_EmbeddedMessage(v)]) : Object.entries(v.int32EmbeddedMessageMapValue).map(([k, v]) => [Number(k), new TestMessage_EmbeddedMessage(v)]));
+    else this.int32EmbeddedMessageMapValue = new Map<number, TestMessage_EmbeddedMessage>();
     if (v?.int64Int32MapValue) this.int64Int32MapValue = new Map(v.int64Int32MapValue);
     else this.int64Int32MapValue = new Map<bigint, number>();
     if (v?.int64Int64MapValue) this.int64Int64MapValue = new Map(v.int64Int64MapValue);
     else this.int64Int64MapValue = new Map<bigint, bigint>();
     if (v?.int64StringMapValue) this.int64StringMapValue = new Map(v.int64StringMapValue);
     else this.int64StringMapValue = new Map<bigint, string>();
-    if (v?.int64EmbeddedMessageMapValue) this.int64EmbeddedMessageMapValue = new Map(Array.from(v.int64EmbeddedMessageMapValue).map(([k, v]) => [k, new strims_test_TestMessage_EmbeddedMessage(v)]));
-    else this.int64EmbeddedMessageMapValue = new Map<bigint, strims_test_TestMessage_EmbeddedMessage>();
+    if (v?.int64EmbeddedMessageMapValue) this.int64EmbeddedMessageMapValue = new Map(Array.from(v.int64EmbeddedMessageMapValue).map(([k, v]) => [k, new TestMessage_EmbeddedMessage(v)]));
+    else this.int64EmbeddedMessageMapValue = new Map<bigint, TestMessage_EmbeddedMessage>();
     this.repeatedInt32MapValue = v?.repeatedInt32MapValue ? v.repeatedInt32MapValue : [];
     this.repeatedInt64MapValue = v?.repeatedInt64MapValue ? v.repeatedInt64MapValue : [];
     this.repeatedStringMapValue = v?.repeatedStringMapValue ? v.repeatedStringMapValue : [];
-    this.repeatedEmbeddedMessageMapValue = v?.repeatedEmbeddedMessageMapValue ? v.repeatedEmbeddedMessageMapValue.map(v => new strims_test_TestMessage_EmbeddedMessage(v)) : [];
+    this.repeatedEmbeddedMessageMapValue = v?.repeatedEmbeddedMessageMapValue ? v.repeatedEmbeddedMessageMapValue.map(v => new TestMessage_EmbeddedMessage(v)) : [];
   }
 
   static encode(m: TestMessage, w?: Writer): Writer {
@@ -150,24 +150,24 @@ export class TestMessage {
     if (m.fixed32Value) w.uint32(117).fixed32(m.fixed32Value);
     if (m.sfixedValue) w.uint32(125).sfixed32(m.sfixedValue);
     if (m.floatValue) w.uint32(133).float(m.floatValue);
-    if (m.embeddedMessageValue) strims_test_TestMessage_EmbeddedMessage.encode(m.embeddedMessageValue, w.uint32(138).fork()).ldelim();
-    if (m.siblingMessageValue) strims_test_SiblingMessage.encode(m.siblingMessageValue, w.uint32(146).fork()).ldelim();
+    if (m.embeddedMessageValue) TestMessage_EmbeddedMessage.encode(m.embeddedMessageValue, w.uint32(138).fork()).ldelim();
+    if (m.siblingMessageValue) SiblingMessage.encode(m.siblingMessageValue, w.uint32(146).fork()).ldelim();
     for (const [k, v] of m.stringInt32MapValue) w.uint32(154).fork().uint32(10).string(k).uint32(16).int32(v).ldelim();
     for (const [k, v] of m.stringInt64MapValue) w.uint32(162).fork().uint32(10).string(k).uint32(16).int64(v).ldelim();
     for (const [k, v] of m.stringStringMapValue) w.uint32(170).fork().uint32(10).string(k).uint32(18).string(v).ldelim();
-    for (const [k, v] of m.stringEmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(178).fork().uint32(10).string(k).uint32(18).fork()).ldelim().ldelim();
+    for (const [k, v] of m.stringEmbeddedMessageMapValue) TestMessage_EmbeddedMessage.encode(v, w.uint32(178).fork().uint32(10).string(k).uint32(18).fork()).ldelim().ldelim();
     for (const [k, v] of m.int32Int32MapValue) w.uint32(186).fork().uint32(8).int32(k).uint32(16).int32(v).ldelim();
     for (const [k, v] of m.int32Int64MapValue) w.uint32(194).fork().uint32(8).int32(k).uint32(16).int64(v).ldelim();
     for (const [k, v] of m.int32StringMapValue) w.uint32(202).fork().uint32(8).int32(k).uint32(18).string(v).ldelim();
-    for (const [k, v] of m.int32EmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(210).fork().uint32(8).int32(k).uint32(18).fork()).ldelim().ldelim();
+    for (const [k, v] of m.int32EmbeddedMessageMapValue) TestMessage_EmbeddedMessage.encode(v, w.uint32(210).fork().uint32(8).int32(k).uint32(18).fork()).ldelim().ldelim();
     for (const [k, v] of m.int64Int32MapValue) w.uint32(218).fork().uint32(8).int64(k).uint32(16).int32(v).ldelim();
     for (const [k, v] of m.int64Int64MapValue) w.uint32(226).fork().uint32(8).int64(k).uint32(16).int64(v).ldelim();
     for (const [k, v] of m.int64StringMapValue) w.uint32(234).fork().uint32(8).int64(k).uint32(18).string(v).ldelim();
-    for (const [k, v] of m.int64EmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(242).fork().uint32(8).int64(k).uint32(18).fork()).ldelim().ldelim();
+    for (const [k, v] of m.int64EmbeddedMessageMapValue) TestMessage_EmbeddedMessage.encode(v, w.uint32(242).fork().uint32(8).int64(k).uint32(18).fork()).ldelim().ldelim();
     m.repeatedInt32MapValue.reduce((w, v) => w.int32(v), w.uint32(250).fork()).ldelim();
     m.repeatedInt64MapValue.reduce((w, v) => w.int64(v), w.uint32(258).fork()).ldelim();
     for (const v of m.repeatedStringMapValue) w.uint32(266).string(v);
-    for (const v of m.repeatedEmbeddedMessageMapValue) strims_test_TestMessage_EmbeddedMessage.encode(v, w.uint32(274).fork()).ldelim();
+    for (const v of m.repeatedEmbeddedMessageMapValue) TestMessage_EmbeddedMessage.encode(v, w.uint32(274).fork()).ldelim();
     return w;
   }
 
@@ -227,10 +227,10 @@ export class TestMessage {
         m.floatValue = r.float();
         break;
         case 17:
-        m.embeddedMessageValue = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
+        m.embeddedMessageValue = TestMessage_EmbeddedMessage.decode(r, r.uint32());
         break;
         case 18:
-        m.siblingMessageValue = strims_test_SiblingMessage.decode(r, r.uint32());
+        m.siblingMessageValue = SiblingMessage.decode(r, r.uint32());
         break;
         case 19:
         {
@@ -306,7 +306,7 @@ export class TestMessage {
           const flen = r.uint32();
           const fend = r.pos + flen;
           let key: string = "";
-          let value: strims_test_TestMessage_EmbeddedMessage | undefined;
+          let value: TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
@@ -314,14 +314,14 @@ export class TestMessage {
               key = r.string();
               break;
               case 2:
-              value = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
+              value = TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
               default:
               r.skipType(ftag & 7);
               break;
             }
           }
-          m.stringEmbeddedMessageMapValue.set(key, value ?? new strims_test_TestMessage_EmbeddedMessage());
+          m.stringEmbeddedMessageMapValue.set(key, value ?? new TestMessage_EmbeddedMessage());
         }
         break;
         case 23:
@@ -398,7 +398,7 @@ export class TestMessage {
           const flen = r.uint32();
           const fend = r.pos + flen;
           let key: number = 0;
-          let value: strims_test_TestMessage_EmbeddedMessage | undefined;
+          let value: TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
@@ -406,14 +406,14 @@ export class TestMessage {
               key = r.int32();
               break;
               case 2:
-              value = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
+              value = TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
               default:
               r.skipType(ftag & 7);
               break;
             }
           }
-          m.int32EmbeddedMessageMapValue.set(key, value ?? new strims_test_TestMessage_EmbeddedMessage());
+          m.int32EmbeddedMessageMapValue.set(key, value ?? new TestMessage_EmbeddedMessage());
         }
         break;
         case 27:
@@ -490,7 +490,7 @@ export class TestMessage {
           const flen = r.uint32();
           const fend = r.pos + flen;
           let key: bigint = BigInt(0);
-          let value: strims_test_TestMessage_EmbeddedMessage | undefined;
+          let value: TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
             const ftag = r.uint32();
             switch (ftag >> 3) {
@@ -498,14 +498,14 @@ export class TestMessage {
               key = r.int64();
               break;
               case 2:
-              value = strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32());
+              value = TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
               default:
               r.skipType(ftag & 7);
               break;
             }
           }
-          m.int64EmbeddedMessageMapValue.set(key, value ?? new strims_test_TestMessage_EmbeddedMessage());
+          m.int64EmbeddedMessageMapValue.set(key, value ?? new TestMessage_EmbeddedMessage());
         }
         break;
         case 31:
@@ -518,7 +518,7 @@ export class TestMessage {
         m.repeatedStringMapValue.push(r.string())
         break;
         case 34:
-        m.repeatedEmbeddedMessageMapValue.push(strims_test_TestMessage_EmbeddedMessage.decode(r, r.uint32()));
+        m.repeatedEmbeddedMessageMapValue.push(TestMessage_EmbeddedMessage.decode(r, r.uint32()));
         break;
         default:
         r.skipType(tag & 7);
@@ -529,48 +529,46 @@ export class TestMessage {
   }
 }
 
-export namespace TestMessage {
-  export type IEmbeddedMessage = {
-    embeddedValue?: number;
+export type TestMessage_IEmbeddedMessage = {
+  embeddedValue?: number;
+}
+
+export class TestMessage_EmbeddedMessage {
+  embeddedValue: number;
+
+  constructor(v?: TestMessage_IEmbeddedMessage) {
+    this.embeddedValue = v?.embeddedValue || 0;
   }
 
-  export class EmbeddedMessage {
-    embeddedValue: number;
+  static encode(m: TestMessage_EmbeddedMessage, w?: Writer): Writer {
+    if (!w) w = new Writer();
+    if (m.embeddedValue) w.uint32(8).int32(m.embeddedValue);
+    return w;
+  }
 
-    constructor(v?: IEmbeddedMessage) {
-      this.embeddedValue = v?.embeddedValue || 0;
-    }
-
-    static encode(m: EmbeddedMessage, w?: Writer): Writer {
-      if (!w) w = new Writer();
-      if (m.embeddedValue) w.uint32(8).int32(m.embeddedValue);
-      return w;
-    }
-
-    static decode(r: Reader | Uint8Array, length?: number): EmbeddedMessage {
-      r = r instanceof Reader ? r : new Reader(r);
-      const end = length === undefined ? r.len : r.pos + length;
-      const m = new EmbeddedMessage();
-      while (r.pos < end) {
-        const tag = r.uint32();
-        switch (tag >> 3) {
-          case 1:
-          m.embeddedValue = r.int32();
-          break;
-          default:
-          r.skipType(tag & 7);
-          break;
-        }
+  static decode(r: Reader | Uint8Array, length?: number): TestMessage_EmbeddedMessage {
+    r = r instanceof Reader ? r : new Reader(r);
+    const end = length === undefined ? r.len : r.pos + length;
+    const m = new TestMessage_EmbeddedMessage();
+    while (r.pos < end) {
+      const tag = r.uint32();
+      switch (tag >> 3) {
+        case 1:
+        m.embeddedValue = r.int32();
+        break;
+        default:
+        r.skipType(tag & 7);
+        break;
       }
-      return m;
     }
+    return m;
   }
+}
 
-  export enum TestEnum {
-    TEST_ENUM_VAL_0 = 0,
-    TEST_ENUM_VAL_1 = 1,
-    TEST_ENUM_VAL_2 = 2,
-  }
+export enum TestMessage_TestEnum {
+  TEST_ENUM_VAL_0 = 0,
+  TEST_ENUM_VAL_1 = 1,
+  TEST_ENUM_VAL_2 = 2,
 }
 
 export type ISiblingMessage = object;
@@ -612,26 +610,26 @@ export class Foo {
 }
 
 export type IBar = {
-  testFoo?: strims_test_IFoo;
-  testBarFoo?: strims_test_Bar_IFoo;
+  testFoo?: IFoo;
+  testBarFoo?: Bar_IFoo;
   testInternalFoo?: strims_test_internal_IFoo;
 }
 
 export class Bar {
-  testFoo: strims_test_Foo | undefined;
-  testBarFoo: strims_test_Bar_Foo | undefined;
+  testFoo: Foo | undefined;
+  testBarFoo: Bar_Foo | undefined;
   testInternalFoo: strims_test_internal_Foo | undefined;
 
   constructor(v?: IBar) {
-    this.testFoo = v?.testFoo && new strims_test_Foo(v.testFoo);
-    this.testBarFoo = v?.testBarFoo && new strims_test_Bar_Foo(v.testBarFoo);
+    this.testFoo = v?.testFoo && new Foo(v.testFoo);
+    this.testBarFoo = v?.testBarFoo && new Bar_Foo(v.testBarFoo);
     this.testInternalFoo = v?.testInternalFoo && new strims_test_internal_Foo(v.testInternalFoo);
   }
 
   static encode(m: Bar, w?: Writer): Writer {
     if (!w) w = new Writer();
-    if (m.testFoo) strims_test_Foo.encode(m.testFoo, w.uint32(10).fork()).ldelim();
-    if (m.testBarFoo) strims_test_Bar_Foo.encode(m.testBarFoo, w.uint32(18).fork()).ldelim();
+    if (m.testFoo) Foo.encode(m.testFoo, w.uint32(10).fork()).ldelim();
+    if (m.testBarFoo) Bar_Foo.encode(m.testBarFoo, w.uint32(18).fork()).ldelim();
     if (m.testInternalFoo) strims_test_internal_Foo.encode(m.testInternalFoo, w.uint32(26).fork()).ldelim();
     return w;
   }
@@ -644,10 +642,10 @@ export class Bar {
       const tag = r.uint32();
       switch (tag >> 3) {
         case 1:
-        m.testFoo = strims_test_Foo.decode(r, r.uint32());
+        m.testFoo = Foo.decode(r, r.uint32());
         break;
         case 2:
-        m.testBarFoo = strims_test_Bar_Foo.decode(r, r.uint32());
+        m.testBarFoo = Bar_Foo.decode(r, r.uint32());
         break;
         case 3:
         m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
@@ -661,190 +659,138 @@ export class Bar {
   }
 }
 
-export namespace Bar {
-  export type IFoo = {
-    testFoo?: strims_test_IFoo;
-    testBarFoo?: strims_test_Bar_IFoo;
-    testInternalFoo?: strims_test_internal_IFoo;
-  }
-
-  export class Foo {
-    testFoo: strims_test_Foo | undefined;
-    testBarFoo: strims_test_Bar_Foo | undefined;
-    testInternalFoo: strims_test_internal_Foo | undefined;
-
-    constructor(v?: IFoo) {
-      this.testFoo = v?.testFoo && new strims_test_Foo(v.testFoo);
-      this.testBarFoo = v?.testBarFoo && new strims_test_Bar_Foo(v.testBarFoo);
-      this.testInternalFoo = v?.testInternalFoo && new strims_test_internal_Foo(v.testInternalFoo);
-    }
-
-    static encode(m: Foo, w?: Writer): Writer {
-      if (!w) w = new Writer();
-      if (m.testFoo) strims_test_Foo.encode(m.testFoo, w.uint32(10).fork()).ldelim();
-      if (m.testBarFoo) strims_test_Bar_Foo.encode(m.testBarFoo, w.uint32(18).fork()).ldelim();
-      if (m.testInternalFoo) strims_test_internal_Foo.encode(m.testInternalFoo, w.uint32(26).fork()).ldelim();
-      return w;
-    }
-
-    static decode(r: Reader | Uint8Array, length?: number): Foo {
-      r = r instanceof Reader ? r : new Reader(r);
-      const end = length === undefined ? r.len : r.pos + length;
-      const m = new Foo();
-      while (r.pos < end) {
-        const tag = r.uint32();
-        switch (tag >> 3) {
-          case 1:
-          m.testFoo = strims_test_Foo.decode(r, r.uint32());
-          break;
-          case 2:
-          m.testBarFoo = strims_test_Bar_Foo.decode(r, r.uint32());
-          break;
-          case 3:
-          m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
-          break;
-          default:
-          r.skipType(tag & 7);
-          break;
-        }
-      }
-      return m;
-    }
-  }
-
-  export namespace Foo {
-    export type IBar = {
-      testFoo?: strims_test_IFoo;
-      testBarFoo?: strims_test_Bar_IFoo;
-      testBarFoo2?: strims_test_Bar_IFoo;
-      testBarFooBar?: strims_test_Bar_Foo_IBar;
-      testBarFooBar2?: strims_test_Bar_Foo_IBar;
-      testInternalFoo?: strims_test_internal_IFoo;
-      testInternalBarFoo?: strims_test_internal_Bar_IFoo;
-      testInternalBarFooBar?: strims_test_internal_Bar_Foo_IBar;
-    }
-
-    export class Bar {
-      testFoo: strims_test_Foo | undefined;
-      testBarFoo: strims_test_Bar_Foo | undefined;
-      testBarFoo2: strims_test_Bar_Foo | undefined;
-      testBarFooBar: strims_test_Bar_Foo_Bar | undefined;
-      testBarFooBar2: strims_test_Bar_Foo_Bar | undefined;
-      testInternalFoo: strims_test_internal_Foo | undefined;
-      testInternalBarFoo: strims_test_internal_Bar_Foo | undefined;
-      testInternalBarFooBar: strims_test_internal_Bar_Foo_Bar | undefined;
-
-      constructor(v?: IBar) {
-        this.testFoo = v?.testFoo && new strims_test_Foo(v.testFoo);
-        this.testBarFoo = v?.testBarFoo && new strims_test_Bar_Foo(v.testBarFoo);
-        this.testBarFoo2 = v?.testBarFoo2 && new strims_test_Bar_Foo(v.testBarFoo2);
-        this.testBarFooBar = v?.testBarFooBar && new strims_test_Bar_Foo_Bar(v.testBarFooBar);
-        this.testBarFooBar2 = v?.testBarFooBar2 && new strims_test_Bar_Foo_Bar(v.testBarFooBar2);
-        this.testInternalFoo = v?.testInternalFoo && new strims_test_internal_Foo(v.testInternalFoo);
-        this.testInternalBarFoo = v?.testInternalBarFoo && new strims_test_internal_Bar_Foo(v.testInternalBarFoo);
-        this.testInternalBarFooBar = v?.testInternalBarFooBar && new strims_test_internal_Bar_Foo_Bar(v.testInternalBarFooBar);
-      }
-
-      static encode(m: Bar, w?: Writer): Writer {
-        if (!w) w = new Writer();
-        if (m.testFoo) strims_test_Foo.encode(m.testFoo, w.uint32(10).fork()).ldelim();
-        if (m.testBarFoo) strims_test_Bar_Foo.encode(m.testBarFoo, w.uint32(18).fork()).ldelim();
-        if (m.testBarFoo2) strims_test_Bar_Foo.encode(m.testBarFoo2, w.uint32(26).fork()).ldelim();
-        if (m.testBarFooBar) strims_test_Bar_Foo_Bar.encode(m.testBarFooBar, w.uint32(34).fork()).ldelim();
-        if (m.testBarFooBar2) strims_test_Bar_Foo_Bar.encode(m.testBarFooBar2, w.uint32(42).fork()).ldelim();
-        if (m.testInternalFoo) strims_test_internal_Foo.encode(m.testInternalFoo, w.uint32(50).fork()).ldelim();
-        if (m.testInternalBarFoo) strims_test_internal_Bar_Foo.encode(m.testInternalBarFoo, w.uint32(58).fork()).ldelim();
-        if (m.testInternalBarFooBar) strims_test_internal_Bar_Foo_Bar.encode(m.testInternalBarFooBar, w.uint32(66).fork()).ldelim();
-        return w;
-      }
-
-      static decode(r: Reader | Uint8Array, length?: number): Bar {
-        r = r instanceof Reader ? r : new Reader(r);
-        const end = length === undefined ? r.len : r.pos + length;
-        const m = new Bar();
-        while (r.pos < end) {
-          const tag = r.uint32();
-          switch (tag >> 3) {
-            case 1:
-            m.testFoo = strims_test_Foo.decode(r, r.uint32());
-            break;
-            case 2:
-            m.testBarFoo = strims_test_Bar_Foo.decode(r, r.uint32());
-            break;
-            case 3:
-            m.testBarFoo2 = strims_test_Bar_Foo.decode(r, r.uint32());
-            break;
-            case 4:
-            m.testBarFooBar = strims_test_Bar_Foo_Bar.decode(r, r.uint32());
-            break;
-            case 5:
-            m.testBarFooBar2 = strims_test_Bar_Foo_Bar.decode(r, r.uint32());
-            break;
-            case 6:
-            m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
-            break;
-            case 7:
-            m.testInternalBarFoo = strims_test_internal_Bar_Foo.decode(r, r.uint32());
-            break;
-            case 8:
-            m.testInternalBarFooBar = strims_test_internal_Bar_Foo_Bar.decode(r, r.uint32());
-            break;
-            default:
-            r.skipType(tag & 7);
-            break;
-          }
-        }
-        return m;
-      }
-    }
-
-  }
-
+export type Bar_IFoo = {
+  testFoo?: IFoo;
+  testBarFoo?: Bar_IFoo;
+  testInternalFoo?: strims_test_internal_IFoo;
 }
 
-/* @internal */
-export const strims_test_TestMessage = TestMessage;
-/* @internal */
-export type strims_test_TestMessage = TestMessage;
-/* @internal */
-export type strims_test_ITestMessage = ITestMessage;
-/* @internal */
-export const strims_test_SiblingMessage = SiblingMessage;
-/* @internal */
-export type strims_test_SiblingMessage = SiblingMessage;
-/* @internal */
-export type strims_test_ISiblingMessage = ISiblingMessage;
-/* @internal */
-export const strims_test_Foo = Foo;
-/* @internal */
-export type strims_test_Foo = Foo;
-/* @internal */
-export type strims_test_IFoo = IFoo;
-/* @internal */
-export const strims_test_Bar = Bar;
-/* @internal */
-export type strims_test_Bar = Bar;
-/* @internal */
-export type strims_test_IBar = IBar;
-/* @internal */
-export const strims_test_TestMessage_EmbeddedMessage = TestMessage.EmbeddedMessage;
-/* @internal */
-export type strims_test_TestMessage_EmbeddedMessage = TestMessage.EmbeddedMessage;
-/* @internal */
-export type strims_test_TestMessage_IEmbeddedMessage = TestMessage.IEmbeddedMessage;
-/* @internal */
-export const strims_test_Bar_Foo = Bar.Foo;
-/* @internal */
-export type strims_test_Bar_Foo = Bar.Foo;
-/* @internal */
-export type strims_test_Bar_IFoo = Bar.IFoo;
-/* @internal */
-export const strims_test_Bar_Foo_Bar = Bar.Foo.Bar;
-/* @internal */
-export type strims_test_Bar_Foo_Bar = Bar.Foo.Bar;
-/* @internal */
-export type strims_test_Bar_Foo_IBar = Bar.Foo.IBar;
-/* @internal */
-export const strims_test_TestMessage_TestEnum = TestMessage.TestEnum;
-/* @internal */
-export type strims_test_TestMessage_TestEnum = TestMessage.TestEnum;
+export class Bar_Foo {
+  testFoo: Foo | undefined;
+  testBarFoo: Bar_Foo | undefined;
+  testInternalFoo: strims_test_internal_Foo | undefined;
+
+  constructor(v?: Bar_IFoo) {
+    this.testFoo = v?.testFoo && new Foo(v.testFoo);
+    this.testBarFoo = v?.testBarFoo && new Bar_Foo(v.testBarFoo);
+    this.testInternalFoo = v?.testInternalFoo && new strims_test_internal_Foo(v.testInternalFoo);
+  }
+
+  static encode(m: Bar_Foo, w?: Writer): Writer {
+    if (!w) w = new Writer();
+    if (m.testFoo) Foo.encode(m.testFoo, w.uint32(10).fork()).ldelim();
+    if (m.testBarFoo) Bar_Foo.encode(m.testBarFoo, w.uint32(18).fork()).ldelim();
+    if (m.testInternalFoo) strims_test_internal_Foo.encode(m.testInternalFoo, w.uint32(26).fork()).ldelim();
+    return w;
+  }
+
+  static decode(r: Reader | Uint8Array, length?: number): Bar_Foo {
+    r = r instanceof Reader ? r : new Reader(r);
+    const end = length === undefined ? r.len : r.pos + length;
+    const m = new Bar_Foo();
+    while (r.pos < end) {
+      const tag = r.uint32();
+      switch (tag >> 3) {
+        case 1:
+        m.testFoo = Foo.decode(r, r.uint32());
+        break;
+        case 2:
+        m.testBarFoo = Bar_Foo.decode(r, r.uint32());
+        break;
+        case 3:
+        m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
+        break;
+        default:
+        r.skipType(tag & 7);
+        break;
+      }
+    }
+    return m;
+  }
+}
+
+export type Bar_Foo_IBar = {
+  testFoo?: IFoo;
+  testBarFoo?: Bar_IFoo;
+  testBarFoo2?: Bar_IFoo;
+  testBarFooBar?: Bar_Foo_IBar;
+  testBarFooBar2?: Bar_Foo_IBar;
+  testInternalFoo?: strims_test_internal_IFoo;
+  testInternalBarFoo?: strims_test_internal_Bar_IFoo;
+  testInternalBarFooBar?: strims_test_internal_Bar_Foo_IBar;
+}
+
+export class Bar_Foo_Bar {
+  testFoo: Foo | undefined;
+  testBarFoo: Bar_Foo | undefined;
+  testBarFoo2: Bar_Foo | undefined;
+  testBarFooBar: Bar_Foo_Bar | undefined;
+  testBarFooBar2: Bar_Foo_Bar | undefined;
+  testInternalFoo: strims_test_internal_Foo | undefined;
+  testInternalBarFoo: strims_test_internal_Bar_Foo | undefined;
+  testInternalBarFooBar: strims_test_internal_Bar_Foo_Bar | undefined;
+
+  constructor(v?: Bar_Foo_IBar) {
+    this.testFoo = v?.testFoo && new Foo(v.testFoo);
+    this.testBarFoo = v?.testBarFoo && new Bar_Foo(v.testBarFoo);
+    this.testBarFoo2 = v?.testBarFoo2 && new Bar_Foo(v.testBarFoo2);
+    this.testBarFooBar = v?.testBarFooBar && new Bar_Foo_Bar(v.testBarFooBar);
+    this.testBarFooBar2 = v?.testBarFooBar2 && new Bar_Foo_Bar(v.testBarFooBar2);
+    this.testInternalFoo = v?.testInternalFoo && new strims_test_internal_Foo(v.testInternalFoo);
+    this.testInternalBarFoo = v?.testInternalBarFoo && new strims_test_internal_Bar_Foo(v.testInternalBarFoo);
+    this.testInternalBarFooBar = v?.testInternalBarFooBar && new strims_test_internal_Bar_Foo_Bar(v.testInternalBarFooBar);
+  }
+
+  static encode(m: Bar_Foo_Bar, w?: Writer): Writer {
+    if (!w) w = new Writer();
+    if (m.testFoo) Foo.encode(m.testFoo, w.uint32(10).fork()).ldelim();
+    if (m.testBarFoo) Bar_Foo.encode(m.testBarFoo, w.uint32(18).fork()).ldelim();
+    if (m.testBarFoo2) Bar_Foo.encode(m.testBarFoo2, w.uint32(26).fork()).ldelim();
+    if (m.testBarFooBar) Bar_Foo_Bar.encode(m.testBarFooBar, w.uint32(34).fork()).ldelim();
+    if (m.testBarFooBar2) Bar_Foo_Bar.encode(m.testBarFooBar2, w.uint32(42).fork()).ldelim();
+    if (m.testInternalFoo) strims_test_internal_Foo.encode(m.testInternalFoo, w.uint32(50).fork()).ldelim();
+    if (m.testInternalBarFoo) strims_test_internal_Bar_Foo.encode(m.testInternalBarFoo, w.uint32(58).fork()).ldelim();
+    if (m.testInternalBarFooBar) strims_test_internal_Bar_Foo_Bar.encode(m.testInternalBarFooBar, w.uint32(66).fork()).ldelim();
+    return w;
+  }
+
+  static decode(r: Reader | Uint8Array, length?: number): Bar_Foo_Bar {
+    r = r instanceof Reader ? r : new Reader(r);
+    const end = length === undefined ? r.len : r.pos + length;
+    const m = new Bar_Foo_Bar();
+    while (r.pos < end) {
+      const tag = r.uint32();
+      switch (tag >> 3) {
+        case 1:
+        m.testFoo = Foo.decode(r, r.uint32());
+        break;
+        case 2:
+        m.testBarFoo = Bar_Foo.decode(r, r.uint32());
+        break;
+        case 3:
+        m.testBarFoo2 = Bar_Foo.decode(r, r.uint32());
+        break;
+        case 4:
+        m.testBarFooBar = Bar_Foo_Bar.decode(r, r.uint32());
+        break;
+        case 5:
+        m.testBarFooBar2 = Bar_Foo_Bar.decode(r, r.uint32());
+        break;
+        case 6:
+        m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
+        break;
+        case 7:
+        m.testInternalBarFoo = strims_test_internal_Bar_Foo.decode(r, r.uint32());
+        break;
+        case 8:
+        m.testInternalBarFooBar = strims_test_internal_Bar_Foo_Bar.decode(r, r.uint32());
+        break;
+        default:
+        r.skipType(tag & 7);
+        break;
+      }
+    }
+    return m;
+  }
+}
+

@@ -47,6 +47,7 @@ func (p *TSModule) generate(f pgs.File) {
 
 	g := &generator{
 		runtimePath: p.c.RuntimePath(),
+		declared:    map[string]string{},
 	}
 	g.generateFile(f)
 
@@ -56,8 +57,30 @@ func (p *TSModule) generate(f pgs.File) {
 type generator struct {
 	pgsutil.Generator
 	runtimePath string
+	// the module's top-level names, each with what it was generated for
+	declared map[string]string
 }
 
+// declare records a top-level name the module declares and returns it.
+// Nested types and oneofs are declared at the top level too, so names can
+// clash, e.g. oneof `M.body` with nested message `M.Body` (both `M_Body`),
+// or message `IFoo` with message `Foo`'s constructor argument type: either
+// would generate a module that doesn't compile.
+func (g *generator) declare(name, what string) string {
+	if prev, ok := g.declared[name]; ok {
+		log.Fatalf("protoc-gen-ts: %s and %s would both be declared as %s", prev, what, name)
+	}
+	g.declared[name] = what
+	return name
+}
+
+func fullName(e pgs.Entity) string {
+	return strings.TrimPrefix(e.FullyQualifiedName(), ".")
+}
+
+// generateFile declares every message, enum and oneof at the module's top
+// level, nested ones under their LocalName (`Bar.Foo` as `Bar_Foo`), so a
+// bundler can drop each one a program doesn't use.
 func (g *generator) generateFile(f pgs.File) {
 	g.Header(f)
 	g.generateImports(f)
@@ -67,12 +90,6 @@ func (g *generator) generateFile(f pgs.File) {
 	}
 	for _, e := range f.Enums() {
 		g.generateEnum(e)
-	}
-	for _, m := range f.AllMessages() {
-		g.generateFullyQualifiedName(m)
-	}
-	for _, e := range f.AllEnums() {
-		g.generateFullyQualifiedName(e)
 	}
 }
 
@@ -146,14 +163,21 @@ func (g *generator) generateImports(f pgs.File) {
 		}
 		sort.Sort(pgsEntitySlice(set.entities))
 
-		g.Line(`import {`)
+		var specs []ts.ImportSpec
 		for _, t := range set.entities {
-			g.Linef("%s,", ts.FQN(t))
 			if _, ok := t.(pgs.Message); ok {
-				g.Linef("%s,", ts.IfFQN(t))
+				specs = append(specs,
+					ts.ImportSpec{Name: ts.LocalName(t), Alias: ts.FQN(t)},
+					ts.ImportSpec{Name: ts.IfLocalName(t), Alias: ts.IfFQN(t), TypeOnly: true},
+				)
+			} else {
+				// fields use an enum only as a type: their zero value is 0
+				specs = append(specs, ts.ImportSpec{Name: ts.LocalName(t), Alias: ts.FQN(t), TypeOnly: true})
 			}
 		}
-		g.Linef(`} from "%s";`, ts.ImportPath(f, i))
+		for _, l := range ts.ImportLines(specs, ts.ImportPath(f, i)) {
+			g.Line(l)
+		}
 	}
 	g.LineBreak()
 }
@@ -170,19 +194,22 @@ func (g *generator) oneOfName(o pgs.OneOf) string {
 	return g.oneOfNameWithPrefix(o, "")
 }
 
+// oneOfNameWithPrefix names a oneof's declarations after its message's, as
+// if it were a nested type: `M.body`'s are `M_Body`, `M_IBody`, `M_TBody`...
 func (g *generator) oneOfNameWithPrefix(o pgs.OneOf, prefix string) string {
-	return fmt.Sprintf(`%s.%s%s`, o.Message().Name().UpperCamelCase(), prefix, o.Name().UpperCamelCase())
+	return fmt.Sprintf(`%s_%s%s`, ts.LocalName(o.Message()), prefix, o.Name().UpperCamelCase())
 }
 
 func (g *generator) generateMessage(m pgs.Message) {
-	className := m.Name().UpperCamelCase()
+	className := g.declare(ts.LocalName(m), "message "+fullName(m))
+	ifName := g.declare(ts.IfLocalName(m), "message "+fullName(m)+"'s constructor argument type")
 
 	// constructor argument interface
 	g.Doc(m)
 	if len(m.Fields()) == 0 {
-		g.Linef(`export type I%s = object;`, className)
+		g.Linef(`export type %s = object;`, ifName)
 	} else {
-		g.Linef(`export type I%s = {`, className)
+		g.Linef(`export type %s = {`, ifName)
 		for _, f := range m.NonOneOfFields() {
 			g.Doc(f)
 			g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsIfType)
@@ -215,7 +242,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 	g.LineBreak()
 
 	// constructor
-	g.Linef(`constructor(v?: I%s) {`, className)
+	g.Linef(`constructor(v?: %s) {`, ifName)
 	if len(m.Fields()) == 0 {
 		// uses v and fills the body, so neither no-unused-vars nor
 		// no-empty-function needs a directive, whichever a linter enables
@@ -292,7 +319,7 @@ func (g *generator) generateMessage(m pgs.Message) {
 		oname := o.Name().LowerCamelCase()
 		g.Linef(`switch (m.%s.case) {`, oname)
 		for _, f := range o.Fields() {
-			g.Linef(`case %s.%s:`, className, g.oneOfCaseName(f))
+			g.Linef(`case %s:`, g.oneOfCaseName(f))
 			fname := g.fieldName(f)
 			fi := g.fieldInfo(f)
 			wireKey := int(f.Descriptor().GetNumber()<<3) | fi.wireType
@@ -397,31 +424,31 @@ func (g *generator) generateMessage(m pgs.Message) {
 	g.Line(`}`)
 	g.LineBreak()
 
-	if len(m.OneOfs()) != 0 || len(m.Messages()) != 0 || len(m.Enums()) != 0 {
-		g.Linef(`export namespace %s {`, className)
-
-		for _, o := range m.OneOfs() {
-			g.generateOneOf(o)
-		}
-		for _, m := range m.Messages() {
-			g.generateMessage(m)
-		}
-		for _, e := range m.Enums() {
-			g.generateEnum(e)
-		}
-
-		g.Line(`}`)
-		g.LineBreak()
+	// nested types follow at the top level, not in a namespace merged onto
+	// the class: that compiles to an IIFE assigning to the class, which
+	// bundlers keep, along with everything it references
+	for _, o := range m.OneOfs() {
+		g.generateOneOf(o)
+	}
+	for _, m := range m.Messages() {
+		g.generateMessage(m)
+	}
+	for _, e := range m.Enums() {
+		g.generateEnum(e)
 	}
 }
 
 func (g *generator) oneOfCaseName(f pgs.Field) string {
-	return fmt.Sprintf("%sCase.%s", f.OneOf().Name().UpperCamelCase(), f.Name().ScreamingSnakeCase())
+	return fmt.Sprintf("%sCase.%s", g.oneOfName(f.OneOf()), f.Name().ScreamingSnakeCase())
 }
 
 func (g *generator) generateOneOf(o pgs.OneOf) {
-	className := fmt.Sprintf("%s", o.Name().UpperCamelCase())
-	caseName := fmt.Sprintf("%sCase", o.Name().UpperCamelCase())
+	what := "oneof " + fullName(o.Message()) + "." + o.Name().String()
+	className := g.declare(g.oneOfName(o), what)
+	caseName := g.declare(className+"Case", what+"'s case enum")
+	ifName := g.declare(g.oneOfNameWithPrefix(o, "I"), what+"'s constructor argument type")
+	casesName := g.declare(g.oneOfNameWithPrefix(o, "T"), what+"'s cases")
+	implName := g.declare(className+"Impl", what+"'s implementation")
 
 	g.Doc(o)
 	g.Linef(`export enum %s {`, caseName)
@@ -434,7 +461,7 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	g.LineBreak()
 
 	// constructor argument interface
-	g.Linef(`export type I%s =`, className)
+	g.Linef(`export type %s =`, ifName)
 	g.Linef(`{ case?: %s.NOT_SET }`, caseName)
 	for _, f := range o.Fields() {
 		g.Linef(`|{ case?: %s, %s: %s }`, g.oneOfCaseName(f), g.fieldName(f), g.fieldInfo(f).tsIfType)
@@ -443,7 +470,7 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	g.LineBreak()
 
 	// cases
-	g.Linef(`export type T%s = Readonly<`, className)
+	g.Linef(`export type %s = Readonly<`, casesName)
 	g.Linef(`{ case: %s.NOT_SET }`, caseName)
 	for _, f := range o.Fields() {
 		g.Linef(`|{ case: %s, %s: %s }`, g.oneOfCaseName(f), g.fieldName(f), g.fieldInfo(f).tsType)
@@ -451,18 +478,21 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	g.Line(`>;`)
 	g.LineBreak()
 
-	g.Linef(`class %sImpl {`, className)
+	g.Linef(`class %s {`, implName)
 
-	// properties: only the case's is set
+	// properties: only the case's is set. They're declared, not defined: as
+	// class fields (ES2022+, useDefineForClassFields) every instance would
+	// own them all, and the constructor's `in` tests would pick the first
+	// case for a value it's given that's an instance already
 	for _, f := range o.Fields() {
 		g.Doc(f)
-		g.Linef(`%s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsType)
+		g.Linef(`declare %s?: %s;`, g.fieldName(f), g.fieldInfo(f).tsType)
 	}
 	g.Linef(`case: %s = %s.NOT_SET;`, caseName, caseName)
 	g.LineBreak()
 
 	// constructor
-	g.Linef(`constructor(v?: I%s) {`, className)
+	g.Linef(`constructor(v?: %s) {`, ifName)
 	for i, f := range o.Fields() {
 		name := g.fieldName(f)
 		if i != 0 {
@@ -482,9 +512,9 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 	g.LineBreak()
 
 	g.Doc(o)
-	g.Linef(`export const %s = %sImpl as {`, className, className)
+	g.Linef(`export const %s = %s as {`, className, implName)
 	g.Linef(`new (): Readonly<{ case: %s.NOT_SET }>;`, caseName)
-	g.Linef(`new <T extends I%s>(v: T): Readonly<`, className)
+	g.Linef(`new <T extends %s>(v: T): Readonly<`, ifName)
 	for _, f := range o.Fields() {
 		fi := g.fieldInfo(f)
 		g.Linef(`T extends { %s: %s } ? { case: %s, %s: %s } :`, g.fieldName(f), fi.tsIfType, g.oneOfCaseName(f), g.fieldName(f), fi.tsType)
@@ -497,31 +527,13 @@ func (g *generator) generateOneOf(o pgs.OneOf) {
 
 func (g *generator) generateEnum(e pgs.Enum) {
 	g.Doc(e)
-	g.Linef(`export enum %s {`, e.Name().UpperCamelCase())
+	g.Linef(`export enum %s {`, g.declare(ts.LocalName(e), "enum "+fullName(e)))
 	for _, v := range e.Values() {
 		g.Doc(v)
 		g.Linef(`%s = %d,`, v.Name().ScreamingSnakeCase(), v.Value())
 	}
 	g.Line(`}`)
-}
-
-func (g *generator) generateFullyQualifiedName(e pgs.Entity) {
-	fqn := ts.FQN(e)
-	name := strings.TrimPrefix(strings.TrimPrefix(e.FullyQualifiedName(), e.File().FullyQualifiedName()), ".")
-
-	g.Linef("/* @internal */")
-	g.Linef("export const %s = %s;", fqn, name)
-	g.Linef("/* @internal */")
-	g.Linef("export type %s = %s;", fqn, name)
-
-	if _, ok := e.(pgs.Message); ok {
-		ifFQN := ts.IfFQN(e)
-		i := strings.LastIndex(name, ".") + 1
-		ifName := fmt.Sprintf("%sI%s", name[:i], name[i:])
-
-		g.Linef("/* @internal */")
-		g.Linef("export type %s = %s;", ifFQN, ifName)
-	}
+	g.LineBreak()
 }
 
 type fieldInfo struct {
@@ -565,10 +577,12 @@ func (g *generator) entityName(f pgs.FieldType, m pgs.Message) (tsType, tsIfType
 		e = f.Enum()
 	}
 
-	tsType = ts.FQN(e)
-	tsIfType = ts.IfFQN(e)
-
-	return
+	// a module refers to its own types by the names it declares them as, and
+	// to another's by the aliases it imports them under
+	if e.File().InputPath() == m.File().InputPath() {
+		return ts.LocalName(e), ts.IfLocalName(e), ""
+	}
+	return ts.FQN(e), ts.IfFQN(e), ""
 }
 
 func (g *generator) isPrimitiveNumeric(p pgs.ProtoType) bool {

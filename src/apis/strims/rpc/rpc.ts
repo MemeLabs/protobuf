@@ -6,7 +6,7 @@ export type ICall = {
   id?: bigint;
   parentId?: bigint;
   method?: string;
-  kind?: strims_rpc_Call_Kind;
+  kind?: Call_Kind;
   argument?: Uint8Array;
   headers?: Map<string, Uint8Array> | { [key: string]: Uint8Array };
 }
@@ -15,7 +15,7 @@ export class Call {
   id: bigint;
   parentId: bigint;
   method: string;
-  kind: strims_rpc_Call_Kind;
+  kind: Call_Kind;
   argument: Uint8Array;
   headers: Map<string, Uint8Array>;
 
@@ -94,14 +94,12 @@ export class Call {
   }
 }
 
-export namespace Call {
-  export enum Kind {
-    CALL_KIND_DEFAULT = 0,
-    CALL_KIND_ERROR = 1,
-    CALL_KIND_CANCEL = 2,
-    CALL_KIND_CLOSE = 3,
-    CALL_KIND_UNDEFINED = 4,
-  }
+export enum Call_Kind {
+  CALL_KIND_DEFAULT = 0,
+  CALL_KIND_ERROR = 1,
+  CALL_KIND_CANCEL = 2,
+  CALL_KIND_CLOSE = 3,
+  CALL_KIND_UNDEFINED = 4,
 }
 
 export type IError = {
@@ -204,37 +202,3 @@ export class Close {
   }
 }
 
-/* @internal */
-export const strims_rpc_Call = Call;
-/* @internal */
-export type strims_rpc_Call = Call;
-/* @internal */
-export type strims_rpc_ICall = ICall;
-/* @internal */
-export const strims_rpc_Error = Error;
-/* @internal */
-export type strims_rpc_Error = Error;
-/* @internal */
-export type strims_rpc_IError = IError;
-/* @internal */
-export const strims_rpc_Cancel = Cancel;
-/* @internal */
-export type strims_rpc_Cancel = Cancel;
-/* @internal */
-export type strims_rpc_ICancel = ICancel;
-/* @internal */
-export const strims_rpc_Undefined = Undefined;
-/* @internal */
-export type strims_rpc_Undefined = Undefined;
-/* @internal */
-export type strims_rpc_IUndefined = IUndefined;
-/* @internal */
-export const strims_rpc_Close = Close;
-/* @internal */
-export type strims_rpc_Close = Close;
-/* @internal */
-export type strims_rpc_IClose = IClose;
-/* @internal */
-export const strims_rpc_Call_Kind = Call.Kind;
-/* @internal */
-export type strims_rpc_Call_Kind = Call.Kind;

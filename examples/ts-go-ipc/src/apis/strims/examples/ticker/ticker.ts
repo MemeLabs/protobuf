@@ -2,8 +2,8 @@ import Reader from "@memelabs/protobuf/lib/pb/reader";
 import Writer from "@memelabs/protobuf/lib/pb/writer";
 
 import {
-  google_protobuf_Timestamp,
-  google_protobuf_ITimestamp,
+  Timestamp as google_protobuf_Timestamp,
+  type ITimestamp as google_protobuf_ITimestamp,
 } from "../../../google/protobuf/timestamp";
 
 export type ITickRequest = {
@@ -85,15 +85,3 @@ export class TickResponse {
   }
 }
 
-/* @internal */
-export const strims_examples_ticker_TickRequest = TickRequest;
-/* @internal */
-export type strims_examples_ticker_TickRequest = TickRequest;
-/* @internal */
-export type strims_examples_ticker_ITickRequest = ITickRequest;
-/* @internal */
-export const strims_examples_ticker_TickResponse = TickResponse;
-/* @internal */
-export type strims_examples_ticker_TickResponse = TickResponse;
-/* @internal */
-export type strims_examples_ticker_ITickResponse = ITickResponse;

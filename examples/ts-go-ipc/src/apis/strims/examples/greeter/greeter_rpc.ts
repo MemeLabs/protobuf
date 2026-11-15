@@ -1,11 +1,11 @@
-import strims_rpc_Host, { UnaryCallOptions as strims_rpc_UnaryCallOptions } from "@memelabs/protobuf/lib/rpc/host";
-import strims_rpc_Service from "@memelabs/protobuf/lib/rpc/service";
-import { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc";
+import type { default as strims_rpc_Host, UnaryCallOptions as strims_rpc_UnaryCallOptions } from "@memelabs/protobuf/lib/rpc/host";
+import type strims_rpc_Service from "@memelabs/protobuf/lib/rpc/service";
+import type { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc";
 
 import {
-  strims_examples_greeter_IGreetRequest,
-  strims_examples_greeter_GreetRequest,
-  strims_examples_greeter_GreetResponse,
+  type IGreetRequest as strims_examples_greeter_IGreetRequest,
+  GreetRequest as strims_examples_greeter_GreetRequest,
+  GreetResponse as strims_examples_greeter_GreetResponse,
 } from "./greeter";
 
 export interface GreeterService {

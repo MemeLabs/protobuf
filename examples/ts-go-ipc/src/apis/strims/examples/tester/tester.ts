@@ -146,27 +146,3 @@ export class StreamResponse {
   }
 }
 
-/* @internal */
-export const strims_examples_tester_UnaryRequest = UnaryRequest;
-/* @internal */
-export type strims_examples_tester_UnaryRequest = UnaryRequest;
-/* @internal */
-export type strims_examples_tester_IUnaryRequest = IUnaryRequest;
-/* @internal */
-export const strims_examples_tester_UnaryResponse = UnaryResponse;
-/* @internal */
-export type strims_examples_tester_UnaryResponse = UnaryResponse;
-/* @internal */
-export type strims_examples_tester_IUnaryResponse = IUnaryResponse;
-/* @internal */
-export const strims_examples_tester_StreamRequest = StreamRequest;
-/* @internal */
-export type strims_examples_tester_StreamRequest = StreamRequest;
-/* @internal */
-export type strims_examples_tester_IStreamRequest = IStreamRequest;
-/* @internal */
-export const strims_examples_tester_StreamResponse = StreamResponse;
-/* @internal */
-export type strims_examples_tester_StreamResponse = StreamResponse;
-/* @internal */
-export type strims_examples_tester_IStreamResponse = IStreamResponse;

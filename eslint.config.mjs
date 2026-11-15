@@ -32,7 +32,6 @@ export default defineConfig([
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",
-      "@typescript-eslint/no-namespace": "off",
       "@typescript-eslint/no-unused-vars": "warn",
       "no-bitwise": "off",
       "quote-props": ["error", "consistent"],

@@ -1,6 +1,7 @@
 package ts
 
 import (
+	"fmt"
 	"strings"
 
 	pgs "github.com/lyft/protoc-gen-star/v2"
@@ -25,4 +26,34 @@ func ImportPath(from, to pgs.File) string {
 		prefix = strings.Repeat("../", unique)
 	}
 	return prefix + strings.Join(iparts[common:], "/")
+}
+
+// ImportSpec is one declaration a module imports, under a local alias.
+type ImportSpec struct {
+	Name     string
+	Alias    string
+	TypeOnly bool
+}
+
+// ImportLines returns the lines of a declaration importing specs from path.
+// If every spec is type-only it's an `import type`, so verbatimModuleSyntax
+// leaves no bare side-effect import behind.
+func ImportLines(specs []ImportSpec, path string) []string {
+	allTypes := true
+	for _, s := range specs {
+		allTypes = allTypes && s.TypeOnly
+	}
+
+	lines := []string{"import {"}
+	if allTypes {
+		lines[0] = "import type {"
+	}
+	for _, s := range specs {
+		modifier := ""
+		if s.TypeOnly && !allTypes {
+			modifier = "type "
+		}
+		lines = append(lines, fmt.Sprintf("%s%s as %s,", modifier, s.Name, s.Alias))
+	}
+	return append(lines, fmt.Sprintf(`} from "%s";`, path))
 }

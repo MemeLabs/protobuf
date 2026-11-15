@@ -74,15 +74,3 @@ export class GreetResponse {
   }
 }
 
-/* @internal */
-export const strims_examples_greeter_GreetRequest = GreetRequest;
-/* @internal */
-export type strims_examples_greeter_GreetRequest = GreetRequest;
-/* @internal */
-export type strims_examples_greeter_IGreetRequest = IGreetRequest;
-/* @internal */
-export const strims_examples_greeter_GreetResponse = GreetResponse;
-/* @internal */
-export type strims_examples_greeter_GreetResponse = GreetResponse;
-/* @internal */
-export type strims_examples_greeter_IGreetResponse = IGreetResponse;

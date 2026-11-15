@@ -88,20 +88,23 @@ func (g *generator) generateImports(f pgs.File) {
 	hostExports := ""
 	for _, s := range f.Services() {
 		if g.hasUnaryMethod(s) {
-			hostExports = ", { UnaryCallOptions as strims_rpc_UnaryCallOptions }"
+			hostExports = ", UnaryCallOptions as strims_rpc_UnaryCallOptions"
 			break
 		}
 	}
 
-	g.Linef(`import strims_rpc_Host%s from "%srpc/host";`, hostExports, root)
-	g.Linef(`import strims_rpc_Service from "%srpc/service";`, root)
-	g.Linef(`import { Call as strims_rpc_Call } from "%sapis/strims/rpc/rpc";`, root)
+	// the runtime is only used as types here, so its imports are type-only:
+	// they leave no import of its modules behind, and Readable is only
+	// declared, so a value import of it wouldn't resolve
+	g.Linef(`import type { default as strims_rpc_Host%s } from "%srpc/host";`, hostExports, root)
+	g.Linef(`import type strims_rpc_Service from "%srpc/service";`, root)
+	g.Linef(`import type { Call as strims_rpc_Call } from "%sapis/strims/rpc/rpc";`, root)
 
 EachService:
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
 			if m.ServerStreaming() {
-				g.Linef(`import { Readable as GenericReadable } from "%srpc/stream";`, root)
+				g.Linef(`import type { Readable as GenericReadable } from "%srpc/stream";`, root)
 				break EachService
 			}
 		}
@@ -109,20 +112,20 @@ EachService:
 
 	g.LineBreak()
 
-	// the methods' types, each named once, grouped by the file declaring them
-	// in the order the methods first use them
+	// the methods' types, each imported once under its FQN, grouped by the
+	// file declaring them in the order the methods first use them
 	type importGroup struct {
 		file  pgs.File
-		names []string
+		specs []ts.ImportSpec
 	}
 	var groups []*importGroup
 	byFile := map[string]*importGroup{}
 	seen := map[string]bool{}
-	add := func(e pgs.Entity, name string) {
-		if seen[name] {
+	add := func(e pgs.Entity, spec ts.ImportSpec) {
+		if seen[spec.Alias] {
 			return
 		}
-		seen[name] = true
+		seen[spec.Alias] = true
 		key := e.File().InputPath().String()
 		group, ok := byFile[key]
 		if !ok {
@@ -130,22 +133,20 @@ EachService:
 			byFile[key] = group
 			groups = append(groups, group)
 		}
-		group.names = append(group.names, name)
+		group.specs = append(group.specs, spec)
 	}
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
-			add(m.Input(), ts.IfFQN(m.Input()))
-			add(m.Input(), ts.FQN(m.Input()))
-			add(m.Output(), ts.FQN(m.Output()))
+			add(m.Input(), ts.ImportSpec{Name: ts.IfLocalName(m.Input()), Alias: ts.IfFQN(m.Input()), TypeOnly: true})
+			add(m.Input(), ts.ImportSpec{Name: ts.LocalName(m.Input()), Alias: ts.FQN(m.Input())})
+			add(m.Output(), ts.ImportSpec{Name: ts.LocalName(m.Output()), Alias: ts.FQN(m.Output())})
 		}
 	}
 
 	for _, group := range groups {
-		g.Line(`import {`)
-		for _, name := range group.names {
-			g.Linef(`%s,`, name)
+		for _, l := range ts.ImportLines(group.specs, ts.ImportPath(f, group.file)) {
+			g.Line(l)
 		}
-		g.Linef(`} from "%s";`, ts.ImportPath(f, group.file))
 	}
 	g.LineBreak()
 }

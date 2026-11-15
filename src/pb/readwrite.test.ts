@@ -1,6 +1,6 @@
 import assert from "assert";
 
-import { TestMessage } from "../apis/strims/test/message";
+import { TestMessage, TestMessage_TestEnum } from "../apis/strims/test/message";
 import Reader from "./reader";
 import Writer from "./writer";
 
@@ -19,7 +19,7 @@ describe("Message", function () {
       sint32Value: 1234567,
       sint64Value: BigInt(1234567890000),
       boolValue: true,
-      enumValue: TestMessage.TestEnum.TEST_ENUM_VAL_2,
+      enumValue: TestMessage_TestEnum.TEST_ENUM_VAL_2,
       fixed64Value: BigInt(1234567890000),
       sfixed64Value: BigInt(1234567890000),
       doubleValue: 1234567,

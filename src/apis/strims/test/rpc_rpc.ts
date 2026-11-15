@@ -1,15 +1,15 @@
-import strims_rpc_Host, { UnaryCallOptions as strims_rpc_UnaryCallOptions } from "../../../rpc/host";
-import strims_rpc_Service from "../../../rpc/service";
-import { Call as strims_rpc_Call } from "../../../apis/strims/rpc/rpc";
-import { Readable as GenericReadable } from "../../../rpc/stream";
+import type { default as strims_rpc_Host, UnaryCallOptions as strims_rpc_UnaryCallOptions } from "../../../rpc/host";
+import type strims_rpc_Service from "../../../rpc/service";
+import type { Call as strims_rpc_Call } from "../../../apis/strims/rpc/rpc";
+import type { Readable as GenericReadable } from "../../../rpc/stream";
 
 import {
-  strims_test_IRPCCallUnaryRequest,
-  strims_test_RPCCallUnaryRequest,
-  strims_test_RPCCallUnaryResponse,
-  strims_test_IRPCCallStreamRequest,
-  strims_test_RPCCallStreamRequest,
-  strims_test_RPCCallStreamResponse,
+  type IRPCCallUnaryRequest as strims_test_IRPCCallUnaryRequest,
+  RPCCallUnaryRequest as strims_test_RPCCallUnaryRequest,
+  RPCCallUnaryResponse as strims_test_RPCCallUnaryResponse,
+  type IRPCCallStreamRequest as strims_test_IRPCCallStreamRequest,
+  RPCCallStreamRequest as strims_test_RPCCallStreamRequest,
+  RPCCallStreamResponse as strims_test_RPCCallStreamResponse,
 } from "./rpc";
 
 export interface RPCTestService {

@@ -1,6 +1,6 @@
 import { PassThrough, Readable, Writable } from "stream";
 
-import { Call, Cancel, Close, Error, Undefined } from "../apis/strims/rpc/rpc";
+import { Call, Call_Kind, Cancel, Close, Error, Undefined } from "../apis/strims/rpc/rpc";
 import { Message, MessageClass } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
@@ -47,7 +47,7 @@ export default class Host {
   public call(
     method: string,
     arg: unknown,
-    kind: Call.Kind = Call.Kind.CALL_KIND_DEFAULT,
+    kind: Call_Kind = Call_Kind.CALL_KIND_DEFAULT,
     parentId = BigInt(0)
   ): Call {
     const call = new Call({
@@ -81,10 +81,10 @@ export default class Host {
         this.callbacks.delete(call.id);
 
         switch (res.kind) {
-          case Call.Kind.CALL_KIND_DEFAULT:
+          case Call_Kind.CALL_KIND_DEFAULT:
             resolve(Message.decode(res.argument));
             break;
-          case Call.Kind.CALL_KIND_ERROR:
+          case Call_Kind.CALL_KIND_ERROR:
             // callers read the rpc.Error's code, and test for it with instanceof
             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
             reject(Error.decode(res.argument));
@@ -100,19 +100,19 @@ export default class Host {
     });
 
     const handleClose = () => {
-      this.call("CANCEL", new Cancel(), Call.Kind.CALL_KIND_CANCEL, call.id);
+      this.call("CANCEL", new Cancel(), Call_Kind.CALL_KIND_CANCEL, call.id);
     };
     e.on("close", handleClose);
 
     this.callbacks.set(call.id, (res: Call) => {
       switch (res.kind) {
-        case Call.Kind.CALL_KIND_DEFAULT:
+        case Call_Kind.CALL_KIND_DEFAULT:
           e.push(Message.decode(res.argument));
           break;
-        case Call.Kind.CALL_KIND_ERROR:
+        case Call_Kind.CALL_KIND_ERROR:
           e.emit("error", Error.decode(res.argument));
           break;
-        case Call.Kind.CALL_KIND_CLOSE:
+        case Call_Kind.CALL_KIND_CLOSE:
           this.callbacks.delete(call.id);
           e.off("close", handleClose);
           e.end();
@@ -149,19 +149,19 @@ export default class Host {
     }
 
     if (res instanceof Readable) {
-      res.on("data", (v) => this.call("CALLBACK", v, Call.Kind.CALL_KIND_DEFAULT, call.id));
-      res.on("close", () => this.call("CALLBACK", new Close(), Call.Kind.CALL_KIND_CLOSE, call.id));
+      res.on("data", (v) => this.call("CALLBACK", v, Call_Kind.CALL_KIND_DEFAULT, call.id));
+      res.on("close", () => this.call("CALLBACK", new Close(), Call_Kind.CALL_KIND_CLOSE, call.id));
     } else if (res instanceof Promise) {
-      void res.then((v) => this.call("CALLBACK", v, Call.Kind.CALL_KIND_DEFAULT, call.id));
+      void res.then((v) => this.call("CALLBACK", v, Call_Kind.CALL_KIND_DEFAULT, call.id));
       res.catch((e: unknown) => {
-        this.call("CALLBACK", toCallError(e), Call.Kind.CALL_KIND_ERROR, call.id);
+        this.call("CALLBACK", toCallError(e), Call_Kind.CALL_KIND_ERROR, call.id);
       });
     } else if (res instanceof Error) {
-      this.call("CALLBACK", res, Call.Kind.CALL_KIND_ERROR, call.id);
+      this.call("CALLBACK", res, Call_Kind.CALL_KIND_ERROR, call.id);
     } else if (res === undefined) {
-      this.call("CALLBACK", new Undefined(), Call.Kind.CALL_KIND_UNDEFINED, call.id);
+      this.call("CALLBACK", new Undefined(), Call_Kind.CALL_KIND_UNDEFINED, call.id);
     } else {
-      this.call("CALLBACK", res, Call.Kind.CALL_KIND_DEFAULT, call.id);
+      this.call("CALLBACK", res, Call_Kind.CALL_KIND_DEFAULT, call.id);
     }
   }
 }
