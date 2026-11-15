@@ -1,0 +1,4 @@
+# pnpm settings for this single-package project (no workspace packages).
+
+# Only install versions published at least 7 days (10080 minutes) ago.
+minimumReleaseAge: 10080
