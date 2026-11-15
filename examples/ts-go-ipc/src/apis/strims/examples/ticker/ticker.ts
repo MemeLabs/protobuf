@@ -25,7 +25,8 @@ export class TickRequest {
 
   static decode(r: Reader | Uint8Array, length?: number): TickRequest {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new TickRequest();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -34,10 +35,11 @@ export class TickRequest {
         m.times = r.int32();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -65,7 +67,8 @@ export class TickResponse {
 
   static decode(r: Reader | Uint8Array, length?: number): TickResponse {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new TickResponse();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -77,10 +80,11 @@ export class TickResponse {
         m.time = google_protobuf_Timestamp.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

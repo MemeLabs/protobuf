@@ -21,7 +21,8 @@ export class RPCCallUnaryRequest {
 
   static decode(r: Reader | Uint8Array, length?: number): RPCCallUnaryRequest {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new RPCCallUnaryRequest();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -30,10 +31,11 @@ export class RPCCallUnaryRequest {
         m.id = r.uint64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -57,7 +59,8 @@ export class RPCCallUnaryResponse {
 
   static decode(r: Reader | Uint8Array, length?: number): RPCCallUnaryResponse {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new RPCCallUnaryResponse();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -66,10 +69,11 @@ export class RPCCallUnaryResponse {
         m.id = r.uint64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -97,7 +101,8 @@ export class RPCCallStreamRequest {
 
   static decode(r: Reader | Uint8Array, length?: number): RPCCallStreamRequest {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new RPCCallStreamRequest();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -109,10 +114,11 @@ export class RPCCallStreamRequest {
         m.count = r.uint64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -136,7 +142,8 @@ export class RPCCallStreamResponse {
 
   static decode(r: Reader | Uint8Array, length?: number): RPCCallStreamResponse {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new RPCCallStreamResponse();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -145,10 +152,11 @@ export class RPCCallStreamResponse {
         m.id = r.uint64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

@@ -21,7 +21,8 @@ export class UnaryRequest {
 
   static decode(r: Reader | Uint8Array, length?: number): UnaryRequest {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new UnaryRequest();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -30,10 +31,11 @@ export class UnaryRequest {
         m.value = r.int64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -57,7 +59,8 @@ export class UnaryResponse {
 
   static decode(r: Reader | Uint8Array, length?: number): UnaryResponse {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new UnaryResponse();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -66,10 +69,11 @@ export class UnaryResponse {
         m.value = r.int64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -93,7 +97,8 @@ export class StreamRequest {
 
   static decode(r: Reader | Uint8Array, length?: number): StreamRequest {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new StreamRequest();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -102,10 +107,11 @@ export class StreamRequest {
         m.value = r.int64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -129,7 +135,8 @@ export class StreamResponse {
 
   static decode(r: Reader | Uint8Array, length?: number): StreamResponse {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new StreamResponse();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -138,10 +145,11 @@ export class StreamResponse {
         m.value = r.int64();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

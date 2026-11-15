@@ -42,7 +42,8 @@ export class Call {
 
   static decode(r: Reader | Uint8Array, length?: number): Call {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Call();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -64,8 +65,8 @@ export class Call {
         break;
         case 6:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: string = "";
           let value: Uint8Array = new Uint8Array();
           while (r.pos < fend) {
@@ -78,18 +79,20 @@ export class Call {
               value = r.bytes();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.headers.set(key, value);
         }
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -125,7 +128,8 @@ export class Error {
 
   static decode(r: Reader | Uint8Array, length?: number): Error {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Error();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -137,10 +141,11 @@ export class Error {
         m.code = r.int32();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

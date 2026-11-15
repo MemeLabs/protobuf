@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package strims.test;
+
+option go_package = "github.com/MemeLabs/protobuf/pkg/apis/test;test";
+option java_package = "org.memelabs.protobuf.test";
+option swift_prefix = "STN";
+
+// Nests through map values, for the TS recursion limit's tests. Only its TS
+// bindings are generated.
+message MapNode {
+  map<string, MapNode> children = 1;
+  map<int32, int32> values = 2;
+}

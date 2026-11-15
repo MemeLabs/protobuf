@@ -343,7 +343,9 @@ func (g *generator) generateMessage(m pgs.Message) {
 		g.Linef(`return new %s();`, className)
 	} else {
 		g.Line(`r = r instanceof Reader ? r : new Reader(r);`)
-		g.Line(`const end = length === undefined ? r.len : r.pos + length;`)
+		// takes a nesting level, and bounds the message by its parent's end
+		g.Line(`const parentEnd = r.enter(length);`)
+		g.Line(`const end = r.end;`)
 		g.Linef(`const m = new %s();`, className)
 		g.Line(`while (r.pos < end) {`)
 		g.Line(`const tag = r.uint32();`)
@@ -363,8 +365,9 @@ func (g *generator) generateMessage(m pgs.Message) {
 			} else if f.Type().IsMap() {
 				ki, _ := g.scalarFieldInfo(f.Type().Key().ProtoType())
 				g.Line(`{`)
-				g.Line(`const flen = r.uint32();`)
-				g.Line(`const fend = r.pos + flen;`)
+				// an entry is a nested message: it takes a level, as in Go
+				g.Line(`const entryParentEnd = r.enter(r.uint32());`)
+				g.Line(`const fend = r.end;`)
 				// an entry missing its key or value has the zero value there
 				g.Linef(`let key: %s = %s;`, ki.tsBaseType, ki.zeroValue)
 				if f.Type().Element().IsEmbed() {
@@ -387,10 +390,11 @@ func (g *generator) generateMessage(m pgs.Message) {
 				}
 				g.Line(`break;`)
 				g.Line(`default:`)
-				g.Line(`r.skipType(ftag & 7);`)
+				g.Line(`r.skipType(ftag & 7, ftag >>> 3);`)
 				g.Line(`break;`)
 				g.Line(`}`)
 				g.Line(`}`)
+				g.Line(`r.leave(entryParentEnd);`)
 				if f.Type().Element().IsEmbed() {
 					g.Linef(`m.%s.set(key, value ?? new %s());`, name, fi.tsConstructor)
 				} else {
@@ -414,10 +418,11 @@ func (g *generator) generateMessage(m pgs.Message) {
 			g.Line(`break;`)
 		}
 		g.Line(`default:`)
-		g.Line(`r.skipType(tag & 7);`)
+		g.Line(`r.skipType(tag & 7, tag >>> 3);`)
 		g.Line(`break;`)
 		g.Line(`}`)
 		g.Line(`}`)
+		g.Line(`r.leave(parentEnd);`)
 		g.Line(`return m;`)
 	}
 	g.Line(`}`)

@@ -173,7 +173,8 @@ export class TestMessage {
 
   static decode(r: Reader | Uint8Array, length?: number): TestMessage {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new TestMessage();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -234,8 +235,8 @@ export class TestMessage {
         break;
         case 19:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: string = "";
           let value: number = 0;
           while (r.pos < fend) {
@@ -248,17 +249,18 @@ export class TestMessage {
               value = r.int32();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.stringInt32MapValue.set(key, value);
         }
         break;
         case 20:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: string = "";
           let value: bigint = BigInt(0);
           while (r.pos < fend) {
@@ -271,17 +273,18 @@ export class TestMessage {
               value = r.int64();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.stringInt64MapValue.set(key, value);
         }
         break;
         case 21:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: string = "";
           let value: string = "";
           while (r.pos < fend) {
@@ -294,17 +297,18 @@ export class TestMessage {
               value = r.string();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.stringStringMapValue.set(key, value);
         }
         break;
         case 22:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: string = "";
           let value: TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
@@ -317,17 +321,18 @@ export class TestMessage {
               value = TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.stringEmbeddedMessageMapValue.set(key, value ?? new TestMessage_EmbeddedMessage());
         }
         break;
         case 23:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: number = 0;
           let value: number = 0;
           while (r.pos < fend) {
@@ -340,17 +345,18 @@ export class TestMessage {
               value = r.int32();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int32Int32MapValue.set(key, value);
         }
         break;
         case 24:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: number = 0;
           let value: bigint = BigInt(0);
           while (r.pos < fend) {
@@ -363,17 +369,18 @@ export class TestMessage {
               value = r.int64();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int32Int64MapValue.set(key, value);
         }
         break;
         case 25:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: number = 0;
           let value: string = "";
           while (r.pos < fend) {
@@ -386,17 +393,18 @@ export class TestMessage {
               value = r.string();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int32StringMapValue.set(key, value);
         }
         break;
         case 26:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: number = 0;
           let value: TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
@@ -409,17 +417,18 @@ export class TestMessage {
               value = TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int32EmbeddedMessageMapValue.set(key, value ?? new TestMessage_EmbeddedMessage());
         }
         break;
         case 27:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: bigint = BigInt(0);
           let value: number = 0;
           while (r.pos < fend) {
@@ -432,17 +441,18 @@ export class TestMessage {
               value = r.int32();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int64Int32MapValue.set(key, value);
         }
         break;
         case 28:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: bigint = BigInt(0);
           let value: bigint = BigInt(0);
           while (r.pos < fend) {
@@ -455,17 +465,18 @@ export class TestMessage {
               value = r.int64();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int64Int64MapValue.set(key, value);
         }
         break;
         case 29:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: bigint = BigInt(0);
           let value: string = "";
           while (r.pos < fend) {
@@ -478,17 +489,18 @@ export class TestMessage {
               value = r.string();
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int64StringMapValue.set(key, value);
         }
         break;
         case 30:
         {
-          const flen = r.uint32();
-          const fend = r.pos + flen;
+          const entryParentEnd = r.enter(r.uint32());
+          const fend = r.end;
           let key: bigint = BigInt(0);
           let value: TestMessage_EmbeddedMessage | undefined;
           while (r.pos < fend) {
@@ -501,10 +513,11 @@ export class TestMessage {
               value = TestMessage_EmbeddedMessage.decode(r, r.uint32());
               break;
               default:
-              r.skipType(ftag & 7);
+              r.skipType(ftag & 7, ftag >>> 3);
               break;
             }
           }
+          r.leave(entryParentEnd);
           m.int64EmbeddedMessageMapValue.set(key, value ?? new TestMessage_EmbeddedMessage());
         }
         break;
@@ -521,10 +534,11 @@ export class TestMessage {
         m.repeatedEmbeddedMessageMapValue.push(TestMessage_EmbeddedMessage.decode(r, r.uint32()));
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -548,7 +562,8 @@ export class TestMessage_EmbeddedMessage {
 
   static decode(r: Reader | Uint8Array, length?: number): TestMessage_EmbeddedMessage {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new TestMessage_EmbeddedMessage();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -557,10 +572,11 @@ export class TestMessage_EmbeddedMessage {
         m.embeddedValue = r.int32();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -636,7 +652,8 @@ export class Bar {
 
   static decode(r: Reader | Uint8Array, length?: number): Bar {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Bar();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -651,10 +668,11 @@ export class Bar {
         m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -686,7 +704,8 @@ export class Bar_Foo {
 
   static decode(r: Reader | Uint8Array, length?: number): Bar_Foo {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Bar_Foo();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -701,10 +720,11 @@ export class Bar_Foo {
         m.testInternalFoo = strims_test_internal_Foo.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -756,7 +776,8 @@ export class Bar_Foo_Bar {
 
   static decode(r: Reader | Uint8Array, length?: number): Bar_Foo_Bar {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Bar_Foo_Bar();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -786,10 +807,11 @@ export class Bar_Foo_Bar {
         m.testInternalBarFooBar = strims_test_internal_Bar_Foo_Bar.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

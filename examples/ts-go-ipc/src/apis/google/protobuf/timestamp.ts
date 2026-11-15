@@ -263,7 +263,8 @@ export class Timestamp {
 
   static decode(r: Reader | Uint8Array, length?: number): Timestamp {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Timestamp();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -275,10 +276,11 @@ export class Timestamp {
         m.nanos = r.int32();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

@@ -283,7 +283,8 @@ export class Any {
 
   static decode(r: Reader | Uint8Array, length?: number): Any {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Any();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -295,10 +296,11 @@ export class Any {
         m.value = r.bytes();
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }

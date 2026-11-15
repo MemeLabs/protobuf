@@ -3,32 +3,113 @@ import { readFloat32, readFloat64 } from "./float";
 
 const textDecoder = new TextDecoder();
 
-// Thrown by any read past the end of the buffer.
-const outOfRange = (): Error => new Error("index out of range");
+// An error thrown as this one instance every time, with no stack.
+const shared = (message: string): Error => {
+  const e = new Error(message);
+  e.stack = `Error: ${message}`;
+  return e;
+};
+
+// Thrown by any read past end.
+const outOfRange = shared("index out of range");
 
 // Thrown for a varint over 10 bytes, or whose 10th byte is over 1.
-const invalidVarint = (): Error => new Error("invalid varint");
+const invalidVarint = shared("invalid varint");
 
+// Thrown by skipType for wire type 4 (an end-group tag outside a group), 6
+// and 7, the wire types a tag can have that aren't values.
+const invalidWireType: { [wireType: number]: Error } = {
+  4: shared("invalid wire type 4"),
+  6: shared("invalid wire type 6"),
+  7: shared("invalid wire type 7"),
+};
+
+const recursionLimitExceeded = (limit: number): Error =>
+  new Error(`exceeded maximum recursion depth (limit ${limit})`);
+
+/** A Reader's options. */
+export interface ReaderOptions {
+  /**
+   * How many levels messages may nest, the outermost counting as 1, as Go's
+   * proto.UnmarshalOptions.RecursionLimit: each nested message, map entry and
+   * unknown group being skipped is a level, except a message of a type with no
+   * fields. At least 1; Infinity sets no limit. Defaults to
+   * Reader.defaultRecursionLimit.
+   */
+  recursionLimit?: number;
+}
+
+/**
+ * Reads the protobuf wire format. A Reader must not be used after it throws.
+ * Decode errors carry no meaningful stack: reads past end, invalid varints
+ * and invalid wire types each throw one shared Error instance.
+ */
 export default class Reader {
+  /** The recursionLimit of every Reader constructed afterwards without one. */
+  static defaultRecursionLimit = 100;
+
   buf: Uint8Array;
   pos = 0;
+  /** The end of the message being read; reads past it throw. Initially len. */
+  end: number;
+  readonly recursionLimit: number;
+  // the levels left
+  private depth: number;
 
-  constructor(buf: Uint8Array) {
+  // Throws a RangeError if the recursion limit is under 1 or NaN.
+  constructor(buf: Uint8Array, options?: ReaderOptions) {
+    const limit = options?.recursionLimit ?? Reader.defaultRecursionLimit;
+    if (!(limit >= 1)) {
+      throw new RangeError(`invalid recursion limit ${limit}`);
+    }
     this.buf = buf;
+    this.end = buf.byteLength;
+    this.recursionLimit = limit;
+    this.depth = limit;
   }
 
+  // The buffer's length.
   get len(): number {
     return this.buf.byteLength;
   }
 
+  // Starts reading a message of length bytes, or to end when length is
+  // undefined: takes a level and sets end to the message's end. Returns the
+  // previous end, for leave. Throws if no level is left or the message runs
+  // past end.
+  enter(length?: number): number {
+    if (--this.depth < 0) {
+      throw recursionLimitExceeded(this.recursionLimit);
+    }
+    const parentEnd = this.end;
+    if (length !== undefined) {
+      const end = this.pos + length;
+      if (end > parentEnd) {
+        throw outOfRange;
+      }
+      this.end = end;
+    }
+    return parentEnd;
+  }
+
+  // Finishes reading the message enter started: gives its level back and
+  // restores end to parentEnd, what enter returned.
+  leave(parentEnd: number): void {
+    this.depth++;
+    this.end = parentEnd;
+  }
+
   skip(n: number): void {
-    if (this.pos + n > this.len) {
-      throw outOfRange();
+    if (this.pos + n > this.end) {
+      throw outOfRange;
     }
     this.pos += n;
   }
 
-  skipType(wireType: number): void {
+  // Skips the value of a field of wireType. A group takes a level, and its
+  // end-group tag must have fieldNumber when that is given. Throws on wire
+  // type 4, 6 or 7, a mismatched end-group tag, or no level left.
+  skipType(wireType: number, fieldNumber?: number): void {
     switch (wireType) {
       case 0:
         this.skipVarint();
@@ -39,29 +120,43 @@ export default class Reader {
       case 2:
         this.skip(this.uint32());
         break;
-      case 3:
+      case 3: {
         // a group: its fields, up to the end-group tag
-        for (let tag = this.uint32(); (tag & 7) !== 4; tag = this.uint32()) {
-          this.skipType(tag & 7);
+        if (--this.depth < 0) {
+          throw recursionLimitExceeded(this.recursionLimit);
         }
+        let tag = this.uint32();
+        for (; (tag & 7) !== 4; tag = this.uint32()) {
+          this.skipType(tag & 7, tag >>> 3);
+        }
+        if (fieldNumber !== undefined && tag >>> 3 !== fieldNumber) {
+          throw new Error(`end-group tag for field ${tag >>> 3} in group ${fieldNumber}`);
+        }
+        this.depth++;
         break;
+      }
       case 5:
         this.skip(4);
         break;
       default:
-        // 4, an end-group tag outside a group, and the unused 6 and 7
-        throw new Error(`invalid wire type ${wireType}`);
+        // 4, an end-group tag outside a group, and the unused 6 and 7; any
+        // other value isn't a tag's
+        throw invalidWireType[wireType] ?? new Error(`invalid wire type ${wireType}`);
     }
   }
 
   private skipVarint(): void {
     for (let n = 1; ; n++) {
-      if (this.pos >= this.len) {
-        throw outOfRange();
+      if (this.pos >= this.end) {
+        throw outOfRange;
       }
       const b = this.buf[this.pos++];
+      // past the buffer, whatever end is
+      if (b === undefined) {
+        throw outOfRange;
+      }
       if (n === 10 && b > 1) {
-        throw invalidVarint();
+        throw invalidVarint;
       }
       if (b < 128) {
         return;
@@ -77,8 +172,8 @@ export default class Reader {
     return BigInt.asIntN(64, this.uint64());
   }
 
-  // Reads a varint's low 32 bits. Reading past the end gives undefined, which
-  // ends the varint, so one check after it is enough.
+  // Reads a varint's low 32 bits. Reading past the buffer gives undefined,
+  // which ends the varint, so one check against end after it is enough.
   uint32(): number {
     const buf = this.buf;
     let pos = this.pos;
@@ -100,15 +195,15 @@ export default class Reader {
             for (let n = 6; b > 127; n++) {
               b = buf[pos++];
               if (n === 10 && b > 1) {
-                throw invalidVarint();
+                throw invalidVarint;
               }
             }
           }
         }
       }
     }
-    if (pos > buf.byteLength) {
-      throw outOfRange();
+    if (pos > this.end) {
+      throw outOfRange;
     }
     this.pos = pos;
     return v >>> 0;
@@ -137,14 +232,14 @@ export default class Reader {
       for (shift = 3; b > 127; shift += 7) {
         b = buf[pos++];
         if (shift === 31 && b > 1) {
-          throw invalidVarint();
+          throw invalidVarint;
         }
         hi |= (b & 127) << shift;
       }
     }
 
-    if (pos > buf.byteLength) {
-      throw outOfRange();
+    if (pos > this.end) {
+      throw outOfRange;
     }
     this.pos = pos;
     return hi === 0 ? BigInt(lo >>> 0) : (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
@@ -179,8 +274,8 @@ export default class Reader {
   }
 
   double(): number {
-    if (this.pos + 8 > this.len) {
-      throw outOfRange();
+    if (this.pos + 8 > this.end) {
+      throw outOfRange;
     }
     const v = readFloat64(this.buf, this.pos);
     this.pos += 8;
@@ -194,8 +289,8 @@ export default class Reader {
   bytes(): Uint8Array {
     const len = this.uint32();
     const end = this.pos + len;
-    if (end > this.len) {
-      throw outOfRange();
+    if (end > this.end) {
+      throw outOfRange;
     }
     const v = this.buf.subarray(this.pos, end);
     this.pos = end;
@@ -209,16 +304,16 @@ export default class Reader {
   sfixed32(): number {
     const buf = this.buf;
     const pos = this.pos;
-    if (pos + 4 > buf.byteLength) {
-      throw outOfRange();
+    if (pos + 4 > this.end) {
+      throw outOfRange;
     }
     this.pos = pos + 4;
     return buf[pos] | (buf[pos + 1] << 8) | (buf[pos + 2] << 16) | (buf[pos + 3] << 24);
   }
 
   float(): number {
-    if (this.pos + 4 > this.len) {
-      throw outOfRange();
+    if (this.pos + 4 > this.end) {
+      throw outOfRange;
     }
     const v = readFloat32(this.buf, this.pos);
     this.pos += 4;

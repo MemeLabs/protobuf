@@ -44,7 +44,8 @@ export class Bar {
 
   static decode(r: Reader | Uint8Array, length?: number): Bar {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Bar();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -56,10 +57,11 @@ export class Bar {
         m.pkgBarFoo = Bar_Foo.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -87,7 +89,8 @@ export class Bar_Foo {
 
   static decode(r: Reader | Uint8Array, length?: number): Bar_Foo {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Bar_Foo();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -99,10 +102,11 @@ export class Bar_Foo {
         m.pkgBarFoo2 = Bar_Foo.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
@@ -142,7 +146,8 @@ export class Bar_Foo_Bar {
 
   static decode(r: Reader | Uint8Array, length?: number): Bar_Foo_Bar {
     r = r instanceof Reader ? r : new Reader(r);
-    const end = length === undefined ? r.len : r.pos + length;
+    const parentEnd = r.enter(length);
+    const end = r.end;
     const m = new Bar_Foo_Bar();
     while (r.pos < end) {
       const tag = r.uint32();
@@ -163,10 +168,11 @@ export class Bar_Foo_Bar {
         m.pkgBarFooBar2 = Bar_Foo_Bar.decode(r, r.uint32());
         break;
         default:
-        r.skipType(tag & 7);
+        r.skipType(tag & 7, tag >>> 3);
         break;
       }
     }
+    r.leave(parentEnd);
     return m;
   }
 }
