@@ -25,25 +25,16 @@ var ErrMessageTooLarge = errors.New("received message too large")
 // RWDialer dials a Transport that exchanges length-delimited frames over
 // ReadWriter. Writes are serialized, one Write per frame.
 //
-// The transport owns ReadWriter. When it stops, it closes ReadWriter if it
-// implements io.Closer, which unblocks a pending Read. It stops when the
-// context passed to Dial is done (Client.Close, or cancelling the context
-// passed to Server.Listen) or when reading fails, e.g. at EOF when the peer
-// goes away. If ReadWriter is not an io.Closer, Listen and all calls still
-// return promptly, but a goroutine stays blocked in Read until it returns,
-// and whatever it reads after the transport stopped is discarded.
-//
-// When the transport stops, the contexts of in-flight incoming calls are
-// cancelled, and pending and later outgoing calls fail with
-// ErrTransportClosed.
+// The transport closes ReadWriter, if it is an io.Closer, when it stops; Close
+// may be called concurrently with Read and Write.
 type RWDialer struct {
 	Logger          *zap.Logger
 	ReadWriter      io.ReadWriter
 	MaxMessageBytes int
 	// MaxStreamBufferBytes limits, per outgoing call, the bytes of responses
 	// that have been received but not yet read by the caller (each counted
-	// as its encoded argument plus a small fixed overhead). A response that
-	// would take a non-empty backlog over the limit fails that call with
+	// as its encoded frame plus a fixed per-response overhead). A response
+	// that would take a non-empty backlog over the limit fails that call with
 	// ErrStreamBufferFull, and the client forwards a cancellation to the
 	// server; other calls are unaffected. 0 means the default, the larger of
 	// 16 MiB and 4×MaxMessageBytes; a negative value means unbounded.
@@ -95,14 +86,15 @@ type RWTransport struct {
 	dispatcher           Dispatcher
 	calls                *rwParentCallMap
 	writeLock            sync.Mutex
+	dispatchLock         sync.Mutex
 	closeOnce            sync.Once
 }
 
-// Listen reads and dispatches incoming calls until the transport stops: when
-// the context passed to Dial is done, which returns its error, or when
-// reading fails, which returns that error. It returns promptly in both cases.
-// Before returning it fails pending calls and closes the ReadWriter if it is
-// an io.Closer.
+// Listen reads and dispatches frames until the context passed to Dial is done
+// or reading fails, and returns that error promptly. By then incoming calls'
+// contexts are cancelled, pending and later outgoing calls fail with
+// ErrTransportClosed, ReadWriter is closed if it is an io.Closer, and no more
+// frames are dispatched.
 func (t *RWTransport) Listen() error {
 	errc := make(chan error, 1)
 	go func() { errc <- t.readLoop() }()
@@ -115,6 +107,11 @@ func (t *RWTransport) Listen() error {
 	}
 
 	t.close(err)
+
+	// dispatch checks ctx under dispatchLock, so no frame is dispatched after this.
+	t.dispatchLock.Lock()
+	t.dispatchLock.Unlock()
+
 	return err
 }
 
@@ -139,28 +136,39 @@ func (t *RWTransport) readLoop() error {
 			return err
 		}
 
-		// After the transport stops, frames are discarded.
-		if err := t.ctx.Err(); err != nil {
+		if err := t.dispatch(b); err != nil {
 			return err
 		}
-
-		// The frame was read in full, so the framing is intact and only this
-		// frame is lost.
-		req := &pb.Call{}
-		if err := proto.Unmarshal(b, req); err != nil {
-			t.logger.Warn(
-				"rpc transport dropped malformed frame",
-				zap.Int("length", int(l)),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		call := NewCallIn(t.ctx, req, t.calls.Accessor(req.ParentId), t.send)
-
-		t.calls.SetCallIn(req.Id, call)
-		t.dispatcher.Dispatch(call, func() { t.calls.DeleteCallIn(req.Id) })
 	}
+}
+
+// dispatch decodes and dispatches one frame under dispatchLock, or drops it
+// and returns the context's error if the transport has stopped.
+func (t *RWTransport) dispatch(b []byte) error {
+	t.dispatchLock.Lock()
+	defer t.dispatchLock.Unlock()
+
+	if err := t.ctx.Err(); err != nil {
+		return err
+	}
+
+	// The frame was read in full, so framing is intact: skip only this frame.
+	req := &pb.Call{}
+	if err := proto.Unmarshal(b, req); err != nil {
+		t.logger.Warn(
+			"rpc transport dropped malformed frame",
+			zap.Int("length", len(b)),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	call := NewCallIn(t.ctx, req, t.calls.Accessor(req.ParentId), t.send)
+	call.frameBytes = len(b)
+
+	t.calls.SetCallIn(req.Id, call)
+	t.dispatcher.Dispatch(call, func() { t.calls.DeleteCallIn(req.Id) })
+	return nil
 }
 
 // close cancels incoming calls, fails pending outgoing calls with
@@ -210,7 +218,14 @@ func (t *RWTransport) send(ctx context.Context, call *pb.Call) error {
 	t.writeLock.Lock()
 	defer t.writeLock.Unlock()
 
+	// After a stop, report ErrTransportClosed rather than the writer's error.
+	if err := t.closedErr(); err != nil {
+		return err
+	}
 	if _, err := t.rw.Write(b); err != nil {
+		if cerr := t.closedErr(); cerr != nil {
+			return cerr
+		}
 		return err
 	}
 

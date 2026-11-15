@@ -11,10 +11,8 @@ import (
 // RWFDialer dials a Transport like RWDialer, with its default limits, that
 // flushes ReadWriteFlusher after each frame.
 //
-// As with RWDialer, the transport owns ReadWriteFlusher: when the transport
-// stops (its dial context is done, e.g. Client.Close or cancelling the
-// context passed to Server.Listen, or reading fails) it closes
-// ReadWriteFlusher if it also implements io.Closer.
+// The transport closes ReadWriteFlusher, if it is an io.Closer, when it stops;
+// Close may be called concurrently with Read, Write and Flush.
 type RWFDialer struct {
 	Logger           *zap.Logger
 	ReadWriteFlusher ReadWriteFlusher

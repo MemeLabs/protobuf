@@ -181,6 +181,101 @@ func TestCliListenReturnsOnCancel(t *testing.T) {
 	})
 }
 
+// Listen waits for a dispatch in progress, so nothing is dispatched after it
+// returns.
+func TestCliListenWaitsForDispatch(t *testing.T) {
+	a, b := cliNewPipePair(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tr, err := (&RWDialer{ReadWriter: a}).Dial(ctx, cliDispatcherFunc(func(_ *CallIn, done func()) {
+		close(entered)
+		<-release
+		done()
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- tr.Listen() }()
+
+	frame, err := marshalAppendLengthDelimited(nil, &pb.Call{Id: 1, Method: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Write(frame); err != nil {
+		t.Fatal(err)
+	}
+	cliWaitClosed(t, entered, time.Second, "frame was not dispatched")
+
+	cancel()
+	select {
+	case err := <-errc:
+		t.Fatalf("Listen returned %v while a dispatch was in progress", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := cliWaitErr(t, errc, time.Second, "Listen"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Listen returned %v, want context.Canceled", err)
+	}
+}
+
+var cliErrRWClosed = errors.New("cliBlockingRW: closed")
+
+// cliBlockingRW blocks Read and Write until it is closed; then both fail.
+type cliBlockingRW struct {
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (b *cliBlockingRW) Read([]byte) (int, error) {
+	<-b.closed
+	return 0, cliErrRWClosed
+}
+
+func (b *cliBlockingRW) Write([]byte) (int, error) {
+	<-b.closed
+	return 0, cliErrRWClosed
+}
+
+func (b *cliBlockingRW) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+// Calls blocked writing their request, or waiting to, when the client closes
+// used to return the writer's error rather than ErrTransportClosed.
+func TestCliSendBlockedAtCloseFails(t *testing.T) {
+	const n = 3
+	client, err := NewClient(zap.NewNop(), &RWDialer{ReadWriter: &cliBlockingRW{closed: make(chan struct{})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() { errc <- client.CallUnary(context.Background(), "m", &pb.Error{}, &pb.Error{}) }()
+	}
+
+	// Calls register before sending, so once all are registered they are
+	// writing or waiting to.
+	tr := client.transport.(*RWTransport)
+	if !cliEventually(time.Second, func() bool {
+		_, out := cliCallMapLens(tr)
+		return out == n
+	}) {
+		t.Fatal("calls were not registered")
+	}
+	time.Sleep(10 * time.Millisecond)
+	client.Close()
+
+	for i := 0; i < n; i++ {
+		if err := cliWaitErr(t, errc, time.Second, "CallUnary"); !errors.Is(err, ErrTransportClosed) {
+			t.Errorf("call returned %v, want ErrTransportClosed", err)
+		}
+	}
+}
+
 type cliFlushPipe struct{ *cliPipeRW }
 
 func (cliFlushPipe) Flush() error { return nil }

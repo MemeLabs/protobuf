@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 )
 
 // Package-level identifiers in this file start with cli (or TestCli) so they
@@ -190,6 +192,32 @@ func cliEventually(d time.Duration, cond func() bool) bool {
 	return cond()
 }
 
+// cliFindCallOut waits for tr to have exactly one pending outgoing call and
+// returns it.
+func cliFindCallOut(t *testing.T, tr *RWTransport) *CallOut {
+	t.Helper()
+	var call *CallOut
+	if !cliEventually(time.Second, func() bool {
+		tr.calls.callsOutLock.Lock()
+		defer tr.calls.callsOutLock.Unlock()
+		if len(tr.calls.callsOut) != 1 {
+			return false
+		}
+		for _, c := range tr.calls.callsOut {
+			call = c
+		}
+		return true
+	}) {
+		t.Fatal("no single pending call")
+	}
+	return call
+}
+
+// cliSilentStream is a streaming handler that never sends.
+func cliSilentStream(ctx context.Context, req *pb.Error) (<-chan *pb.Error, error) {
+	return make(chan *pb.Error), nil
+}
+
 func cliCallUnary(c *Client, method string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -261,16 +289,46 @@ func TestCliSlowStreamDoesNotStallConn(t *testing.T) {
 func TestCliStreamCancelWithoutDraining(t *testing.T) {
 	cancelled := make(chan struct{})
 	c := cliNewConn(t, func(d *ServiceDispatcher) {
-		d.RegisterMethod("stream", cliStreamer(-1, time.Millisecond, cancelled))
+		// Send messages 0, 1 and 2, then wait to be cancelled.
+		d.RegisterMethod("stream", func(ctx context.Context, req *pb.Error) (<-chan *pb.Error, error) {
+			ch := make(chan *pb.Error)
+			go func() {
+				defer close(cancelled)
+				for i := 0; i < 3; i++ {
+					select {
+					case ch <- &pb.Error{Message: "tick", Code: int32(i)}:
+					case <-ctx.Done():
+						return
+					}
+				}
+				<-ctx.Done()
+			}()
+			return ch, nil
+		})
 	}, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	ch := make(chan *pb.Error)
 	errc := make(chan error, 1)
 	go func() { errc <- c.client.CallStreaming(ctx, "stream", &pb.Error{}, ch) }()
-	<-ch
-	time.Sleep(20 * time.Millisecond) // the next message is now waiting to be sent to ch
-	cancel()                          // and ch is never read again
+	<-ch // message 0, then ch is never read again
+
+	// Once message 2 is the only one queued, CallStreaming has taken message
+	// 1 and is waiting to send it to ch.
+	call := cliFindCallOut(t, c.clientT)
+	if !cliEventually(time.Second, func() bool {
+		call.mu.Lock()
+		defer call.mu.Unlock()
+		if len(call.queue) != 1 {
+			return false
+		}
+		var m pb.Error
+		return proto.Unmarshal(call.queue[0].req.Argument, &m) == nil && m.Code == 2
+	}) {
+		t.Fatal("CallStreaming never took message 1")
+	}
+	cancel()
 
 	if err := cliWaitErr(t, errc, time.Second, "CallStreaming"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("CallStreaming returned %v, want context.Canceled", err)
@@ -278,6 +336,8 @@ func TestCliStreamCancelWithoutDraining(t *testing.T) {
 	cliWaitClosed(t, cancelled, time.Second, "server handler was not cancelled")
 }
 
+// A regression guard for the per-call queue rather than a repro: per-call
+// message order must survive a consumer of uneven speed.
 func TestCliStreamOrder(t *testing.T) {
 	const n = 2000
 	c := cliNewConn(t, func(d *ServiceDispatcher) {
@@ -471,6 +531,7 @@ func (cliNoParent) ParentCallOut() *CallOut { return nil }
 
 // Internal reads of the lazily created context used to race with a
 // concurrent Cancel, e.g. a "method not found" reply racing a CANCEL frame.
+// It only detects the race when run with -race.
 func TestCliCallBaseCancelRace(t *testing.T) {
 	nopSend := func(context.Context, *pb.Call) error { return nil }
 
@@ -517,5 +578,204 @@ func TestCliErrorMessages(t *testing.T) {
 	}
 	if errors.Is(transportClosedError(context.Canceled), context.Canceled) {
 		t.Error("transport closed error must not match context.Canceled")
+	}
+}
+
+// The buffer limit charges a response's whole frame. It used to charge only
+// the argument, so frames with large headers were held far past the limit.
+func TestCliStreamBufferCountsWholeFrame(t *testing.T) {
+	c := cliNewConn(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("silent", cliSilentStream)
+	}, func(d *RWDialer) {
+		d.MaxStreamBufferBytes = 1 << 20
+	})
+
+	ch := make(chan *pb.Error) // never read
+	errc := make(chan error, 1)
+	go func() { errc <- c.client.CallStreaming(context.Background(), "silent", &pb.Error{}, ch) }()
+	call := cliFindCallOut(t, c.clientT)
+
+	// 20 frames of 100 KiB, each with a tiny argument.
+	hdr := map[string][]byte{"h": make([]byte, 100<<10)}
+	arg, err := proto.Marshal(&pb.Error{Message: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		res := &pb.Call{Id: uint64(1<<40 + i), ParentId: call.ID(), Method: callbackMethod, Argument: arg, Headers: hdr}
+		if err := c.serverT.send(context.Background(), res); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := cliWaitErr(t, errc, 2*time.Second, "CallStreaming"); !errors.Is(err, ErrStreamBufferFull) {
+		t.Fatalf("CallStreaming returned %v, want ErrStreamBufferFull", err)
+	}
+}
+
+// A CallOut used with a Transport other than RWTransport is bounded too.
+func TestCliCallOutDefaultBufferLimit(t *testing.T) {
+	fill := func(call *CallOut) {
+		for i := 0; i < 20 && call.failure() == nil; i++ {
+			call.AssignResponse(&CallIn{req: &pb.Call{Id: uint64(i)}, frameBytes: 1 << 20})
+		}
+	}
+
+	call, err := NewCallOut(context.Background(), "m", &pb.Error{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fill(call)
+	if err := call.failure(); !errors.Is(err, ErrStreamBufferFull) {
+		t.Fatalf("20 MiB queued with the default limit: got %v, want ErrStreamBufferFull", err)
+	}
+
+	unbounded, err := NewCallOut(context.Background(), "m", &pb.Error{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unbounded.setMaxQueueBytes(-1)
+	fill(unbounded)
+	if err := unbounded.failure(); err != nil {
+		t.Fatalf("unbounded call failed: %v", err)
+	}
+}
+
+func TestCliShouldForwardCancel(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{ErrClose, false},
+		{transportClosedError(errors.New("EOF")), false},
+		{&pb.Error{Message: "server error"}, false},
+		{context.Canceled, true},
+		{context.DeadlineExceeded, true},
+		{ErrStreamBufferFull, true},
+		{ErrInvalidType, true},
+		{proto.Unmarshal([]byte{0x0a, 0x01, 0xff}, &pb.Error{}), true},
+	} {
+		if got := shouldForwardCancel(tc.err); got != tc.want {
+			t.Errorf("shouldForwardCancel(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
+// A stream that ends because a response fails to decode on the client used
+// to forward no CANCEL, so the server kept streaming.
+func TestCliDecodeErrorForwardsCancel(t *testing.T) {
+	cancelled := make(chan struct{})
+	c := cliNewConn(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("stream", cliStreamer(-1, time.Millisecond, cancelled))
+	}, nil)
+
+	ch := make(chan *pb.Error)
+	errc := make(chan error, 1)
+	go func() { errc <- c.client.CallStreaming(context.Background(), "stream", &pb.Error{}, ch) }()
+	<-ch
+	call := cliFindCallOut(t, c.clientT)
+
+	// pb.Error.Message (field 1) holding invalid UTF-8.
+	bad := &pb.Call{Id: 1 << 41, ParentId: call.ID(), Method: callbackMethod, Argument: []byte{0x0a, 0x01, 0xff}}
+	if err := c.serverT.send(context.Background(), bad); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for range ch {
+		}
+	}()
+
+	err := cliWaitErr(t, errc, time.Second, "CallStreaming")
+	if err == nil || errors.Is(err, ErrTransportClosed) {
+		t.Fatalf("CallStreaming returned %v, want a decode error", err)
+	}
+	cliWaitClosed(t, cancelled, time.Second, "server handler was not cancelled after a decode error")
+}
+
+// Responses received before the transport stops are delivered, in order,
+// before ErrTransportClosed.
+func TestCliQueuedResponsesDeliveredBeforeClose(t *testing.T) {
+	const n = 50
+	c := cliNewConn(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("silent", cliSilentStream)
+	}, nil)
+
+	ch := make(chan *pb.Error)
+	errc := make(chan error, 1)
+	go func() { errc <- c.client.CallStreaming(context.Background(), "silent", &pb.Error{}, ch) }()
+	call := cliFindCallOut(t, c.clientT)
+
+	for i := 0; i < n; i++ {
+		arg, err := proto.Marshal(&pb.Error{Code: int32(i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := &pb.Call{Id: uint64(1<<42 + i), ParentId: call.ID(), Method: callbackMethod, Argument: arg}
+		if err := c.serverT.send(context.Background(), res); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.serverRW.Close()
+
+	got := 0
+	for m := range ch {
+		if m.Code != int32(got) {
+			t.Fatalf("message %d has index %d", got, m.Code)
+		}
+		got++
+		time.Sleep(time.Millisecond)
+	}
+	if err := cliWaitErr(t, errc, time.Second, "CallStreaming"); got != n || !errors.Is(err, ErrTransportClosed) {
+		t.Fatalf("received %d of %d messages, then %v; want all, then ErrTransportClosed", got, n, err)
+	}
+}
+
+// Every call racing Close returns, with either its result or
+// ErrTransportClosed.
+func TestCliCloseRace(t *testing.T) {
+	for iter := 0; iter < 20; iter++ {
+		c := cliNewConn(t, func(d *ServiceDispatcher) {
+			d.RegisterMethod("unary", cliUnary)
+			d.RegisterMethod("block", cliBlock(nil))
+			d.RegisterMethod("stream", cliStreamer(-1, 0, nil))
+		}, nil)
+
+		var wg sync.WaitGroup
+		errs := make(chan error, 30)
+		for i := 0; i < 30; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				switch i % 3 {
+				case 0:
+					errs <- c.client.CallUnary(context.Background(), "unary", &pb.Error{}, &pb.Error{})
+				case 1:
+					errs <- c.client.CallUnary(context.Background(), "block", &pb.Error{}, &pb.Error{})
+				case 2:
+					ch := make(chan *pb.Error, 4)
+					go func() {
+						for range ch {
+						}
+					}()
+					errs <- c.client.CallStreaming(context.Background(), "stream", &pb.Error{}, ch)
+				}
+			}()
+		}
+		time.Sleep(time.Duration(iter%5) * time.Millisecond)
+		c.client.Close()
+
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		cliWaitClosed(t, done, 2*time.Second, fmt.Sprintf("iteration %d: calls still running after Close", iter))
+		close(errs)
+		for err := range errs {
+			if err != nil && !errors.Is(err, ErrTransportClosed) {
+				t.Errorf("iteration %d: call returned %v, want nil or ErrTransportClosed", iter, err)
+			}
+		}
 	}
 }

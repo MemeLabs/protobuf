@@ -99,6 +99,7 @@ type CallIn struct {
 	req          *pb.Call
 	responseType ResponseType
 	send         SendFunc
+	frameBytes   int // encoded size of req as received, 0 if unknown
 }
 
 // ID ...
@@ -187,9 +188,16 @@ func (c *CallIn) returnStream(v interface{}) {
 
 var emptyCallOut = &CallOut{}
 
-// queueEntryOverhead is the per-response cost, on top of the argument bytes,
-// charged against a CallOut's response buffer limit.
-const queueEntryOverhead = 64
+// Costs charged against a CallOut's response buffer limit on top of each
+// response's encoded frame size, rounded up from the heap measured for
+// decoded responses: about 120 bytes beyond the encoded size per response
+// (the pb.Call, its Method string and its queue slot), and for Headers about
+// 400 bytes per map plus 100 per entry.
+const (
+	queueEntryOverhead  = 160
+	headersMapOverhead  = 512
+	headerEntryOverhead = 128
+)
 
 // NewCallOut ...
 func NewCallOut(ctx context.Context, method string, arg proto.Message) (*CallOut, error) {
@@ -199,13 +207,14 @@ func NewCallOut(ctx context.Context, method string, arg proto.Message) (*CallOut
 // NewCallOutWithParent ...
 func NewCallOutWithParent(ctx context.Context, method string, arg proto.Message, parent Call) (*CallOut, error) {
 	return &CallOut{
-		CallBase: NewCallBase(ctx),
-		id:       atomic.AddUint64(nextID, 1),
-		parentID: parent.ID(),
-		method:   method,
-		arg:      arg,
-		notify:   make(chan struct{}, 1),
-		aborted:  make(chan struct{}),
+		CallBase:      NewCallBase(ctx),
+		id:            atomic.AddUint64(nextID, 1),
+		parentID:      parent.ID(),
+		method:        method,
+		arg:           arg,
+		maxQueueBytes: defaultMinStreamBufferBytes,
+		notify:        make(chan struct{}, 1),
+		aborted:       make(chan struct{}),
 	}, nil
 }
 
@@ -214,7 +223,8 @@ func NewCallOutWithParent(ctx context.Context, method string, arg proto.Message,
 // AssignResponse queues responses per call and never blocks, so a slow reader
 // only delays its own call. When maxQueueBytes is positive, a response that
 // arrives while the queue is not empty and would take it over that limit
-// discards the queue and fails the call with ErrStreamBufferFull.
+// discards the queue and fails the call with ErrStreamBufferFull. The limit
+// defaults to 16 MiB; RWTransport sets it from RWDialer.MaxStreamBufferBytes.
 type CallOut struct {
 	CallBase
 	id       uint64
@@ -223,12 +233,31 @@ type CallOut struct {
 	arg      proto.Message
 
 	mu            sync.Mutex
-	queue         []*pb.Call
+	queue         []queuedResponse
 	queueBytes    int
 	maxQueueBytes int
 	err           error
 	notify        chan struct{} // signalled when queue or err changes
 	aborted       chan struct{} // closed when the buffer overflows
+}
+
+type queuedResponse struct {
+	req  *pb.Call
+	cost int
+}
+
+// responseCost is what a queued response is charged against the buffer
+// limit: its encoded size, as received if known, plus the fixed overheads.
+func responseCost(res *CallIn) int {
+	n := res.frameBytes
+	if n == 0 {
+		n = proto.Size(res.req)
+	}
+	n += queueEntryOverhead
+	if h := len(res.req.Headers); h > 0 {
+		n += headersMapOverhead + h*headerEntryOverhead
+	}
+	return n
 }
 
 // ID ...
@@ -262,7 +291,7 @@ func (c *CallOut) AssignResponse(res *CallIn) {
 		return
 	}
 
-	n := len(res.req.Argument) + queueEntryOverhead
+	n := responseCost(res)
 	if c.maxQueueBytes > 0 && len(c.queue) > 0 && c.queueBytes+n > c.maxQueueBytes {
 		c.queue = nil
 		c.queueBytes = 0
@@ -271,7 +300,7 @@ func (c *CallOut) AssignResponse(res *CallIn) {
 		return
 	}
 
-	c.queue = append(c.queue, res.req)
+	c.queue = append(c.queue, queuedResponse{res.req, n})
 	c.queueBytes += n
 	c.signalLocked()
 }
@@ -314,13 +343,13 @@ func (c *CallOut) nextResponse() (*pb.Call, error) {
 	}
 
 	r := c.queue[0]
-	c.queue[0] = nil
+	c.queue[0] = queuedResponse{}
 	c.queue = c.queue[1:]
 	if len(c.queue) == 0 {
 		c.queue = nil
 	}
-	c.queueBytes -= len(r.Argument) + queueEntryOverhead
-	return r, nil
+	c.queueBytes -= r.cost
+	return r.req, nil
 }
 
 // ReadResponse ...

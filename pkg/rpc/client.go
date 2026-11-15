@@ -91,12 +91,23 @@ func (c *Client) handleError(call *CallOut, err error) error {
 		clientErrorCount.WithLabelValues(call.Method()).Inc()
 	}
 
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrStreamBufferFull) {
+	if shouldForwardCancel(err) {
 		if err := c.forwardCancel(call); err != nil {
 			c.logger.Debug("forwarding request cancellation failed", zap.Error(err))
 		}
 	}
 	return err
+}
+
+// shouldForwardCancel reports whether a call that ended with err may still be
+// running on the server: true for client-side failures, false when the
+// server ended the call or the transport is gone.
+func shouldForwardCancel(err error) bool {
+	if err == nil || errors.Is(err, ErrClose) || errors.Is(err, ErrTransportClosed) {
+		return false
+	}
+	var serverErr *pb.Error
+	return !errors.As(err, &serverErr)
 }
 
 // CallUnary ...
