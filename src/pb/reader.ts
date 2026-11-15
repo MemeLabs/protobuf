@@ -6,7 +6,7 @@ const textDecoder = new TextDecoder();
 // Thrown by any read past the end of the buffer.
 const outOfRange = (): Error => new Error("index out of range");
 
-// A varint is at most 10 bytes.
+// Thrown for a varint over 10 bytes, or whose 10th byte is over 1.
 const invalidVarint = (): Error => new Error("invalid varint");
 
 export default class Reader {
@@ -55,15 +55,18 @@ export default class Reader {
   }
 
   private skipVarint(): void {
-    for (let i = 0; i < 10; i++) {
+    for (let n = 1; ; n++) {
       if (this.pos >= this.len) {
         throw outOfRange();
       }
-      if (this.buf[this.pos++] < 128) {
+      const b = this.buf[this.pos++];
+      if (n === 10 && b > 1) {
+        throw invalidVarint();
+      }
+      if (b < 128) {
         return;
       }
     }
-    throw invalidVarint();
   }
 
   int32(): number {
@@ -94,11 +97,11 @@ export default class Reader {
             b = buf[pos++];
             v |= (b & 15) << 28;
             // the rest of a sign-extended 10-byte varint; bits past 32 are dropped
-            for (let n = 5; b > 127; n++) {
-              if (n === 10) {
+            for (let n = 6; b > 127; n++) {
+              b = buf[pos++];
+              if (n === 10 && b > 1) {
                 throw invalidVarint();
               }
-              b = buf[pos++];
             }
           }
         }
@@ -132,10 +135,10 @@ export default class Reader {
       lo |= (b & 15) << 28;
       hi = (b & 127) >> 4;
       for (shift = 3; b > 127; shift += 7) {
-        if (shift > 31) {
+        b = buf[pos++];
+        if (shift === 31 && b > 1) {
           throw invalidVarint();
         }
-        b = buf[pos++];
         hi |= (b & 127) << shift;
       }
     }

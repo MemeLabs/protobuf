@@ -79,6 +79,22 @@ describe("Reader", function () {
     assert.throws(() => new Reader(long).skipType(0), /invalid varint/);
   });
 
+  it("throws on a 10-byte varint whose last byte is over 1, as the Go runtime does", function () {
+    const varint = (last: number) => bytes(...new Array<number>(9).fill(0xff), last);
+    for (const read of [
+      (r: Reader) => r.uint32(),
+      (r: Reader) => r.int32(),
+      (r: Reader) => r.uint64(),
+      (r: Reader) => r.skipType(0),
+    ]) {
+      assert.throws(() => read(new Reader(varint(0x02))), /invalid varint/);
+      assert.throws(() => read(new Reader(varint(0x7f))), /invalid varint/);
+      const r = new Reader(varint(0x01));
+      assert.doesNotThrow(() => read(r));
+      assert.strictEqual(r.pos, 10);
+    }
+  });
+
   it("reads the largest uint64", function () {
     const max = (BigInt(1) << BigInt(64)) - BigInt(1);
     const r = new Reader(new Writer().uint64(max).finish());

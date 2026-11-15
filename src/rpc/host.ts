@@ -1,4 +1,4 @@
-import { PassThrough, Readable, Writable } from "stream";
+import { Readable, Writable } from "stream";
 
 import {
   Call,
@@ -46,6 +46,15 @@ const connectionClosed = (): Error => new Error("rpc: connection closed");
 // The error for a response of a kind the call can't take.
 const unexpectedKind = (kind: Call_Kind): Error =>
   new Error(`rpc: unexpected response kind ${Call_Kind[kind] ?? kind}`);
+
+// Whether stream has emitted end; readable-stream 3 has no readableEnded.
+const hasEnded = (stream: Readable): boolean => {
+  const s = stream as unknown as {
+    readableEnded?: boolean;
+    _readableState?: { endEmitted?: boolean };
+  };
+  return s.readableEnded ?? s._readableState?.endEmitted === true;
+};
 
 // A data chunk's bytes, without copying.
 const toBytes = (data: ArrayBufferView | ArrayBuffer): Uint8Array => {
@@ -97,10 +106,9 @@ interface ServedCall {
  * peer's calls with service. Only r.on() is used; data chunks may split or
  * join frames anywhere.
  *
- * r only needs on(). Its data chunks (Buffers, Uint8Arrays or ArrayBuffers)
- * may split or join frames anywhere. Its end, close and error events all end
- * the host: calls it made fail, and calls it serves are cancelled. Half-closed
- * connections aren't supported.
+ * r's end, close or error event closes the host: pending calls fail, served
+ * calls are cancelled, and nothing more is written. Half-close isn't
+ * supported.
  */
 export default class Host {
   private w: Writable;
@@ -153,22 +161,30 @@ export default class Host {
     kind: Call_Kind = Call_Kind.CALL_KIND_DEFAULT,
     parentId = BigInt(0)
   ): Call {
-    const call = new Call({
-      id: ++this.callId,
-      parentId,
-      method,
-      kind,
-      argument: (arg as Message<unknown>).constructor.encode(arg, this.argWriter.reset()).finish(),
-    });
+    const call = this.newCall(method, arg, kind, parentId);
+    this.send(call);
+    return call;
+  }
 
+  // Makes the next call; it throws if arg won't encode.
+  private newCall(method: string, arg: unknown, kind: Call_Kind, parentId: bigint): Call {
+    const argument = (arg as Message<unknown>).constructor
+      .encode(arg, this.argWriter.reset())
+      .finish();
+    return new Call({ id: ++this.callId, parentId, method, kind, argument });
+  }
+
+  // Writes call, unless the host has closed.
+  private send(call: Call) {
+    if (this.closed) {
+      return;
+    }
     this.writing++;
     try {
       this.w.write(Call.encode(call, this.callWriter.reset().fork()).ldelim().finish().slice());
     } finally {
       this.writing--;
     }
-
-    return call;
   }
 
   public expectOne<T>(
@@ -228,11 +244,58 @@ export default class Host {
   }
 
   public expectMany<T>(call: Call, Message: MessageClass<T>): GenericReadable<T> {
+    // Items not yet pushed, and how the stream ends once they are read: an
+    // error, or null for CLOSE. Items are pushed only on read (highWaterMark
+    // 0), so destroying the stream with the error drops none.
+    const queue: T[] = [];
+    let ending: { err: Error | null } | undefined;
+    // whether the consumer has asked for an item it hasn't been given
+    let wanted = false;
+
+    const flush = () => {
+      if (!wanted || e.destroyed) {
+        return;
+      }
+      if (queue.length > 0) {
+        wanted = false;
+        e.push(queue.shift());
+      } else if (ending) {
+        wanted = false;
+        const { err } = ending;
+        if (err) {
+          // after the read() that asked, so the last item is delivered first
+          void Promise.resolve().then(() => e.destroy(err));
+        } else {
+          e.push(null);
+        }
+      }
+    };
+
     // autoDestroy, so readable-stream 3 (browsers) emits close after end too
-    const e = new PassThrough({
+    const e = new Readable({
       objectMode: true,
+      highWaterMark: 0,
       autoDestroy: true,
+      read: () => {
+        wanted = true;
+        flush();
+      },
     });
+
+    // Ends the stream once the consumer has read every item; at once if
+    // there are none to read.
+    const end = (err: Error | null) => {
+      if (queue.length === 0 && (!err || e.readableLength === 0)) {
+        if (err) {
+          e.destroy(err);
+        } else {
+          e.push(null);
+        }
+        return;
+      }
+      ending = { err };
+      flush();
+    };
 
     if (this.closed) {
       e.destroy(connectionClosed());
@@ -262,30 +325,32 @@ export default class Host {
             try {
               v = Message.decode(res.argument);
             } catch (err) {
-              // closing cancels the call
-              e.destroy(err as Error);
+              finish();
+              this.cancel(call.id);
+              end(err as Error);
               break;
             }
-            e.push(v);
+            queue.push(v);
+            flush();
             break;
           }
           case Call_Kind.CALL_KIND_ERROR:
             finish();
             // consumers read the rpc.Error's code, and test for it with instanceof
-            e.destroy(decodeCallError(res.argument) as Error);
+            end(decodeCallError(res.argument) as Error);
             break;
           case Call_Kind.CALL_KIND_CLOSE:
             finish();
-            e.end();
+            end(null);
             break;
           default:
             finish();
-            e.destroy(unexpectedKind(res.kind));
+            end(unexpectedKind(res.kind));
         }
       },
       fail: (err: Error) => {
         finish();
-        e.destroy(err);
+        end(err);
       },
     });
 
@@ -431,6 +496,9 @@ export default class Host {
         if (!served.done) {
           this.unserve(call.id, served);
           this.respond(call.id, v);
+        } else if (v instanceof Readable) {
+          // cancelled before the handler's promise settled
+          v.destroy();
         }
       };
       void res.then(settle, (e: unknown) => settle(toCallError(e)));
@@ -452,16 +520,19 @@ export default class Host {
     }
   }
 
-  // Sends a response to call id. One that won't encode (a plain object, say)
-  // is answered with an error instead, and reply returns false.
+  // Sends a response to call id. If res won't encode, it sends an error
+  // instead and returns false.
   private reply(id: bigint, res: unknown, kind: Call_Kind): boolean {
+    let call: Call;
+    let encoded = true;
     try {
-      this.call(CALLBACK_METHOD, res, kind, id);
-      return true;
+      call = this.newCall(CALLBACK_METHOD, res, kind, id);
     } catch (e) {
-      this.call(CALLBACK_METHOD, toCallError(e), Call_Kind.CALL_KIND_ERROR, id);
-      return false;
+      call = this.newCall(CALLBACK_METHOD, toCallError(e), Call_Kind.CALL_KIND_ERROR, id);
+      encoded = false;
     }
+    this.send(call);
+    return encoded;
   }
 
   // Sends the stream's items, then one CLOSE when it ends, or one ERROR if it
@@ -487,6 +558,19 @@ export default class Host {
     stream.on("error", (e: unknown) => finish(toCallError(e), Call_Kind.CALL_KIND_ERROR));
     // destroyed, with no error, before it ended
     stream.on("close", () => finish(new Close(), Call_Kind.CALL_KIND_CLOSE));
+
+    // An already finished stream may have emitted its last event; a timer runs
+    // after any still pending on process.nextTick.
+    if (stream.destroyed || hasEnded(stream)) {
+      setTimeout(() => {
+        const { errored } = stream as { errored?: unknown };
+        if (errored) {
+          finish(toCallError(errored), Call_Kind.CALL_KIND_ERROR);
+        } else {
+          finish(new Close(), Call_Kind.CALL_KIND_CLOSE);
+        }
+      });
+    }
   }
 
   private unserve(id: bigint, served: ServedCall) {
@@ -506,11 +590,17 @@ export default class Host {
     }
   }
 
-  // The connection is gone, as the Go runtime takes a closed transport: the
-  // calls this host made fail, and those it serves are cancelled.
+  // Closes the host: dispatches the whole frames already read, then fails
+  // pending calls, cancels served ones and stops writing.
   private shutdown() {
     if (this.closed) {
       return;
+    }
+    if (!this.reading) {
+      this.read();
+      if (this.closed) {
+        return;
+      }
     }
     this.closed = true;
     this.chunks = [];
