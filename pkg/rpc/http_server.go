@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"sync"
@@ -27,13 +28,22 @@ type HTTPServer struct {
 	*ServiceDispatcher
 
 	// MaxMessageBytes caps a request's message size; larger requests get a
-	// 413. <= 0 means the default, 512 KiB. Set it before serving.
+	// 413. 0 means the default, 512 KiB; negative means unlimited. Set it
+	// before serving.
 	MaxMessageBytes int
+
+	// MaxConcurrentCalls limits the requests in service at once, across all
+	// clients; a request beyond it gets an ERROR response with
+	// ErrTooManyCalls. CANCEL requests are not limited. 0 means the default,
+	// 128; negative means unlimited. Set it before serving.
+	MaxConcurrentCalls int
+
+	inService callSlots
 }
 
 func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	maxMessageBytes := s.MaxMessageBytes
-	if maxMessageBytes <= 0 {
+	if maxMessageBytes == 0 {
 		maxMessageBytes = defaultMaxMessageBytes
 	}
 
@@ -42,13 +52,13 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}
-	if l > uint64(maxMessageBytes) {
+	if l > math.MaxInt || (maxMessageBytes >= 0 && l > uint64(maxMessageBytes)) {
 		httpServeError(http.StatusRequestEntityTooLarge, ErrMessageTooLarge, w)
 		return
 	}
 
-	b := make([]byte, l)
-	if _, err := io.ReadFull(r.Body, b); err != nil {
+	b, err := readFrame(r.Body, nil, int(l))
+	if err != nil {
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}
@@ -72,8 +82,20 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release := noopRelease
+	if !env.isCancel() {
+		if !s.inService.acquire(concurrentCallLimit(s.MaxConcurrentCalls)) {
+			sendError(r.Context(), env.id, ErrTooManyCalls, func(_ context.Context, res *pb.Call) error {
+				return httpServeProto(res, w)
+			})
+			return
+		}
+		release = s.inService.releaser()
+	}
+
 	req := &pb.Call{}
 	if err := envelopeUnmarshal.Unmarshal(b, req); err != nil {
+		release()
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}
@@ -88,7 +110,12 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	var doneOnce sync.Once
 	call := NewCallIn(ctx, req, noopParentCallAccessor{}, rw.send)
-	s.ServiceDispatcher.Dispatch(call, func() { doneOnce.Do(func() { close(done) }) })
+	s.ServiceDispatcher.Dispatch(call, func() {
+		doneOnce.Do(func() {
+			release()
+			close(done)
+		})
+	})
 
 	select {
 	case <-done:

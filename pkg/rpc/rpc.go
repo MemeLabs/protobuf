@@ -48,10 +48,21 @@ var ErrInvalidType = errors.New("invaild type")
 // when a transport stops and by calls made after it has stopped.
 var ErrTransportClosed = errors.New("rpc: transport closed")
 
-// ErrStreamBufferFull is returned by a call whose unread responses exceeded
-// RWDialer.MaxStreamBufferBytes. The client also cancels the call on the
-// server.
-var ErrStreamBufferFull = errors.New("rpc: stream response buffer full")
+// The rpc layer's error codes, as strims-rpc numbers them.
+const (
+	errorCodeTooManyConcurrentCalls int32 = 1003
+	errorCodeOverflow               int32 = 1010
+)
+
+// ErrStreamBufferFull, code 1010, is returned by a call whose unread
+// responses exceeded RWDialer.MaxStreamBufferBytes. The client also cancels
+// the call on the server.
+var ErrStreamBufferFull = WrapError(errors.New("rpc: stream response buffer full"), errorCodeOverflow)
+
+// ErrTooManyCalls, code 1003, is the ERROR response to a request received
+// while RWDialer.MaxConcurrentCalls or HTTPServer.MaxConcurrentCalls calls
+// are in service.
+var ErrTooManyCalls = WrapError(errors.New("rpc: too many concurrent calls"), errorCodeTooManyConcurrentCalls)
 
 // ErrTooManyHeaders is the error for a received frame whose headers exceed
 // MaxHeaders or MaxHeaderBytes: the ERROR response to such a request (from

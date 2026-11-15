@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -624,21 +626,43 @@ func TestHardRejectionQueue(t *testing.T) {
 	}
 }
 
+// hardCapture is a Dialer that hands the transports it dials to dialed.
+type hardCapture struct {
+	*RWDialer
+	dialed chan *RWTransport
+}
+
+func (d hardCapture) Dial(ctx context.Context, dispatcher Dispatcher) (Transport, error) {
+	tr, err := d.RWDialer.Dial(ctx, dispatcher)
+	if err == nil {
+		d.dialed <- tr.(*RWTransport)
+	}
+	return tr, err
+}
+
 // hardConn connects a Client made with clientOpts to a Server made with
 // serverOpts over a pipe pair.
 func hardConn(t *testing.T, register func(*ServiceDispatcher), serverOpts []Option, dialer func(*RWDialer), clientOpts ...Option) *Client {
 	t.Helper()
+	c, _ := hardConnServer(t, register, serverOpts, dialer, clientOpts...)
+	return c
+}
+
+// hardConnServer is hardConn that also returns the server's transport.
+func hardConnServer(t *testing.T, register func(*ServiceDispatcher), serverOpts []Option, dialer func(*RWDialer), clientOpts ...Option) (*Client, *RWTransport) {
+	t.Helper()
 	logger := zap.NewNop()
 	clientRW, serverRW := cliNewPipePair(t)
 
-	d := &RWDialer{Logger: logger, ReadWriter: serverRW}
+	d := hardCapture{&RWDialer{Logger: logger, ReadWriter: serverRW}, make(chan *RWTransport, 1)}
 	if dialer != nil {
-		dialer(d)
+		dialer(d.RWDialer)
 	}
 	s := NewServer(logger, d, serverOpts...)
 	register(s.ServiceDispatcher)
 	ctx, cancel := context.WithCancel(context.Background())
 	go s.Listen(ctx)
+	st := <-d.dialed
 
 	c, err := NewClient(logger, &RWDialer{Logger: logger, ReadWriter: clientRW}, clientOpts...)
 	if err != nil {
@@ -649,7 +673,7 @@ func hardConn(t *testing.T, register func(*ServiceDispatcher), serverOpts []Opti
 		c.Close()
 		cancel()
 	})
-	return c
+	return c, st
 }
 
 // hardNested returns a message nested depth levels deep, itself included.
@@ -824,6 +848,373 @@ func TestHardUnmarshalHook(t *testing.T) {
 		}
 		if err := c.CallUnary(hardCallTimeout(t), "hard.deep", &pb.Error{Code: 101}, &descriptorpb.DescriptorProto{}); err == nil {
 			t.Fatal("depth 101 response accepted with WithUnmarshal(nil)")
+		}
+	})
+}
+
+// hardHolder is a Dispatcher that keeps hard.hold calls in service until
+// released and finishes every other frame at once. It records the methods
+// it sees.
+type hardHolder struct {
+	mu   sync.Mutex
+	held []func()
+	seen []string
+}
+
+func (h *hardHolder) Dispatch(call *CallIn, done func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.seen = append(h.seen, call.Method())
+	if call.Method() == "hard.hold" {
+		h.held = append(h.held, done)
+		return
+	}
+	done()
+}
+
+// releaseOne finishes the oldest held call, calling its done twice.
+func (h *hardHolder) releaseOne() {
+	h.mu.Lock()
+	done := h.held[0]
+	h.held = h.held[1:]
+	h.mu.Unlock()
+	done()
+	done()
+}
+
+func (h *hardHolder) count(method string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, m := range h.seen {
+		if m == method {
+			n++
+		}
+	}
+	return n
+}
+
+const hardTooManyCalls = "rpc: too many concurrent calls"
+
+func hardCallCap(n int) func(*RWDialer) {
+	return func(d *RWDialer) { d.MaxConcurrentCalls = n }
+}
+
+// Over the limit, requests get an ERROR at once and their handlers never
+// run.
+func TestHardCallCapRejects(t *testing.T) {
+	entered := make(chan struct{}, 3)
+	c := hardConn(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("hard.block", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+			entered <- struct{}{}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	}, nil, hardCallCap(2))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for range 2 {
+		go c.CallUnary(ctx, "hard.block", &pb.Error{}, &pb.Error{})
+		cliWaitClosed(t, entered, 2*time.Second, "call not served")
+	}
+
+	start := time.Now()
+	err := c.CallUnary(hardCallTimeout(t), "hard.block", &pb.Error{}, &pb.Error{})
+	var e *pb.Error
+	if !errors.As(err, &e) || e.Message != hardTooManyCalls || ErrorCode(err) != 1003 {
+		t.Fatalf("got %v (code %d), want %q with code 1003", err, ErrorCode(err), hardTooManyCalls)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("rejection took %s", d)
+	}
+	select {
+	case <-entered:
+		t.Fatal("rejected call reached its handler")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// A call's slot is released when it returns, when its stream closes and
+// when it is cancelled, by a CANCEL that is processed even at the limit.
+func TestHardCallCapRelease(t *testing.T) {
+	c, st := hardConnServer(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("hard.unary", cliUnary)
+		d.RegisterMethod("hard.block", cliBlock(nil))
+		d.RegisterMethod("hard.stream", cliStreamer(3, 0, nil))
+		d.RegisterMethod("hard.silent", cliSilentStream)
+	}, nil, hardCallCap(1))
+
+	waitInService := func(t *testing.T, n int64, what string) {
+		t.Helper()
+		if !cliEventually(2*time.Second, func() bool { return st.inService.n.Load() == n }) {
+			t.Fatalf("%d calls in service, want %d %s", st.inService.n.Load(), n, what)
+		}
+	}
+	unary := func() error { return c.CallUnary(hardCallTimeout(t), "hard.unary", &pb.Error{}, &pb.Error{}) }
+
+	t.Run("unary", func(t *testing.T) {
+		for range 3 {
+			if err := unary(); err != nil {
+				t.Fatal(err)
+			}
+			waitInService(t, 0, "after a unary call returned")
+		}
+	})
+
+	t.Run("stream close", func(t *testing.T) {
+		ch := make(chan *pb.Error, 3)
+		if err := c.CallStreaming(hardCallTimeout(t), "hard.stream", &pb.Error{}, ch); err != nil {
+			t.Fatal(err)
+		}
+		waitInService(t, 0, "after a stream closed")
+	})
+
+	cancelled := func(t *testing.T, call func(ctx context.Context) error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		errc := make(chan error, 1)
+		go func() { errc <- call(ctx) }()
+		waitInService(t, 1, "while a call is blocked")
+		if err := unary(); ErrorCode(err) != 1003 {
+			t.Fatalf("call at the limit returned %v, want code 1003", err)
+		}
+		cancel()
+		cliWaitErr(t, errc, 2*time.Second, "call")
+		waitInService(t, 0, "after its CANCEL")
+		if err := unary(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("unary cancel", func(t *testing.T) {
+		cancelled(t, func(ctx context.Context) error {
+			return c.CallUnary(ctx, "hard.block", &pb.Error{}, &pb.Error{})
+		})
+	})
+
+	t.Run("stream cancel", func(t *testing.T) {
+		cancelled(t, func(ctx context.Context) error {
+			return c.CallStreaming(ctx, "hard.silent", &pb.Error{}, make(chan *pb.Error))
+		})
+	})
+}
+
+// At the limit, CALLBACK frames are dropped without a reply, CANCEL frames
+// are dispatched, and calling done twice releases one slot.
+func TestHardCallCapFrames(t *testing.T) {
+	h := &hardHolder{}
+	p := hardServe(t, h, hardCallCap(1))
+	p.startReading()
+
+	p.write(t, hardFrame(t, &pb.Call{Id: 1, Method: "hard.hold"}))
+	p.write(t, hardFrame(t, &pb.Call{Id: 2, ParentId: 99, Method: callbackMethod}))
+	p.write(t, hardFrame(t, &pb.Call{Id: 3, Method: "hard.other"}))
+	hardWantError(t, p.next(t), 3, hardTooManyCalls, 1003)
+	if n := h.count(callbackMethod); n != 0 {
+		t.Fatalf("CALLBACK over the limit was dispatched")
+	}
+
+	p.write(t, hardFrame(t, &pb.Call{Id: 4, ParentId: 1, Method: cancelMethod}))
+	if !cliEventually(time.Second, func() bool { return h.count(cancelMethod) == 1 }) {
+		t.Fatal("CANCEL at the limit was not dispatched")
+	}
+
+	h.releaseOne()
+	p.write(t, hardFrame(t, &pb.Call{Id: 5, Method: "hard.hold"}))
+	p.write(t, hardFrame(t, &pb.Call{Id: 6, Method: "hard.other"}))
+	hardWantError(t, p.next(t), 6, hardTooManyCalls, 1003)
+	if n := h.count("hard.hold"); n != 2 {
+		t.Fatalf("dispatched %d hard.hold calls, want 2", n)
+	}
+}
+
+// The limit is per transport, even when transports share a dispatcher.
+func TestHardCallCapPerTransport(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	disp := NewServiceDispatcher(zap.NewNop())
+	disp.RegisterMethod("hard.block", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+		entered <- struct{}{}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	disp.RegisterMethod("hard.unary", cliUnary)
+	a := hardServe(t, disp, hardCallCap(1))
+	b := hardServe(t, disp, hardCallCap(1))
+	a.startReading()
+	b.startReading()
+
+	a.write(t, hardFrame(t, &pb.Call{Id: 1, Method: "hard.block", Argument: hardArg(t)}))
+	cliWaitClosed(t, entered, 2*time.Second, "call not served")
+	a.write(t, hardFrame(t, &pb.Call{Id: 2, Method: "hard.unary", Argument: hardArg(t)}))
+	hardWantError(t, a.next(t), 2, hardTooManyCalls, 1003)
+
+	b.write(t, hardFrame(t, &pb.Call{Id: 1, Method: "hard.unary", Argument: hardArg(t)}))
+	if res := b.next(t); res.ParentId != 1 || res.Kind != pb.Call_CALL_KIND_DEFAULT {
+		t.Fatalf("other transport: got %v response to %d, want DEFAULT to 1", res.Kind, res.ParentId)
+	}
+}
+
+// HTTPServer limits requests across clients, answers over the limit with an
+// ERROR frame, doesn't limit CANCEL, and counts a handler until it returns,
+// even after its client has gone.
+func TestHardCallCapHTTP(t *testing.T) {
+	s := NewHTTPServer(zap.NewNop())
+	s.MaxConcurrentCalls = 1
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	s.RegisterMethod("hard.block", func(ctx context.Context, req *pb.Error) (*pb.Error, error) {
+		entered <- struct{}{}
+		<-release
+		return &pb.Error{}, nil
+	})
+	s.RegisterMethod("hard.unary", cliUnary)
+	serve := func(ctx context.Context, c *pb.Call) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, srvHTTPRequest(t, ctx, c))
+		return w
+	}
+	unary := func(id uint64) *pb.Call {
+		return srvHTTPDecode(t, serve(context.Background(), &pb.Call{Id: id, Method: "hard.unary", Argument: hardArg(t)}).Body.Bytes())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan struct{})
+	go func() {
+		serve(ctx, &pb.Call{Id: 1, Method: "hard.block", Argument: hardArg(t)})
+		close(served)
+	}()
+	cliWaitClosed(t, entered, 2*time.Second, "call not served")
+
+	hardWantError(t, unary(2), 2, hardTooManyCalls, 1003)
+	if w := serve(context.Background(), &pb.Call{Id: 3, ParentId: 1, Method: cancelMethod}); w.Code != http.StatusOK || w.Body.Len() != 0 {
+		t.Fatalf("CANCEL at the limit: got %d with %d bytes, want an empty 200", w.Code, w.Body.Len())
+	}
+
+	cancel()
+	cliWaitClosed(t, served, 2*time.Second, "ServeHTTP did not return after the client went away")
+	hardWantError(t, unary(4), 4, hardTooManyCalls, 1003)
+
+	close(release)
+	if !cliEventually(2*time.Second, func() bool { return unary(5).Kind == pb.Call_CALL_KIND_DEFAULT }) {
+		t.Fatal("slot not released after the handler returned")
+	}
+}
+
+// The limit errors carry strims-rpc's codes, and wrapping keeps them.
+func TestHardErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code int32
+	}{
+		{ErrTooManyCalls, 1003},
+		{ErrStreamBufferFull, 1010},
+		{ErrTooManyHeaders, 0},
+		{ErrMessageTooLarge, 0},
+	} {
+		wrapped := fmt.Errorf("wrapped: %w", tc.err)
+		if ErrorCode(tc.err) != tc.code || ErrorCode(wrapped) != tc.code || !errors.Is(wrapped, tc.err) {
+			t.Errorf("%v: code %d (wrapped %d, matches %v), want %d", tc.err, ErrorCode(tc.err), ErrorCode(wrapped), errors.Is(wrapped, tc.err), tc.code)
+		}
+	}
+
+	// A call that overflows its buffer fails with code 1010.
+	c := cliNewConn(t, func(d *ServiceDispatcher) {
+		d.RegisterMethod("hard.stream", cliStreamer(-1, 0, nil))
+	}, func(d *RWDialer) {
+		d.MaxStreamBufferBytes = 1
+	})
+	err := c.client.CallStreaming(hardCallTimeout(t), "hard.stream", &pb.Error{}, make(chan *pb.Error))
+	if !errors.Is(err, ErrStreamBufferFull) || ErrorCode(err) != 1010 {
+		t.Fatalf("got %v (code %d), want ErrStreamBufferFull with code 1010", err, ErrorCode(err))
+	}
+}
+
+// 0 means 128 calls and negative means unlimited.
+func TestHardCallCapDefaults(t *testing.T) {
+	for n, want := range map[int]int{0: 128, 5: 5, -1: -1} {
+		if got := concurrentCallLimit(n); got != want {
+			t.Errorf("concurrentCallLimit(%d) = %d, want %d", n, got, want)
+		}
+	}
+
+	t.Run("default", func(t *testing.T) {
+		h := &hardHolder{}
+		p := hardServe(t, h, nil)
+		p.startReading()
+		for i := range 128 {
+			p.write(t, hardFrame(t, &pb.Call{Id: uint64(i + 1), Method: "hard.hold"}))
+		}
+		p.write(t, hardFrame(t, &pb.Call{Id: 1000, Method: "hard.other"}))
+		hardWantError(t, p.next(t), 1000, hardTooManyCalls, 1003)
+		if n := h.count("hard.hold"); n != 128 {
+			t.Fatalf("held %d calls, want 128", n)
+		}
+	})
+
+	t.Run("unlimited", func(t *testing.T) {
+		h := &hardHolder{}
+		p := hardServe(t, h, hardCallCap(-1))
+		for i := range 1000 {
+			p.write(t, hardFrame(t, &pb.Call{Id: uint64(i + 1), Method: "hard.hold"}))
+		}
+		p.write(t, hardFrame(t, &pb.Call{Id: 2000, Method: "hard.other"}))
+		if !cliEventually(2*time.Second, func() bool { return h.count("hard.other") == 1 }) {
+			t.Fatalf("request after %d held calls was not dispatched", h.count("hard.hold"))
+		}
+	})
+}
+
+// Negative MaxMessageBytes means unlimited, and a frame's memory is
+// allocated as its bytes arrive rather than as its length prefix claims.
+func TestHardMessageBytesUnlimited(t *testing.T) {
+	big := &pb.Call{Id: 1, Method: "hard.count", Argument: srvMarshal(t, &pb.Error{Message: strings.Repeat("x", 600<<10)})}
+
+	t.Run("rw", func(t *testing.T) {
+		disp, _ := hardCounter("hard.count")
+		unlimited := func(d *RWDialer) { d.MaxMessageBytes = -1 }
+
+		p := hardServe(t, disp, unlimited)
+		p.startReading()
+		p.write(t, hardFrame(t, big))
+		if res := p.next(t); res.ParentId != 1 || res.Kind != pb.Call_CALL_KIND_DEFAULT {
+			t.Fatalf("got %v response to %d, want DEFAULT to 1", res.Kind, res.ParentId)
+		}
+		if n := p.tr.maxStreamBufferBytes; n != defaultMinStreamBufferBytes {
+			t.Errorf("default MaxStreamBufferBytes with unlimited messages is %d, want %d", n, defaultMinStreamBufferBytes)
+		}
+
+		q := hardServe(t, disp, unlimited)
+		if _, err := q.rw.Write(append(binary.AppendUvarint(nil, 1<<50), make([]byte, 32)...)); err != nil {
+			t.Fatal(err)
+		}
+		q.rw.Close()
+		if err := cliWaitErr(t, q.done, 2*time.Second, "Listen"); !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("Listen returned %v, want io.ErrUnexpectedEOF", err)
+		}
+	})
+
+	t.Run("http", func(t *testing.T) {
+		s := NewHTTPServer(zap.NewNop())
+		s.MaxMessageBytes = -1
+		s.RegisterMethod("hard.count", cliUnary)
+		serve := func(body []byte) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, httptest.NewRequest("POST", "/", bytes.NewReader(body)))
+			return w
+		}
+
+		body, err := marshalAppendLengthDelimited(nil, big)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w := serve(body); w.Code != http.StatusOK || srvHTTPDecode(t, w.Body.Bytes()).Kind != pb.Call_CALL_KIND_DEFAULT {
+			t.Fatalf("600 KiB request: got %d, want a DEFAULT response", w.Code)
+		}
+		if w := serve(append(binary.AppendUvarint(nil, 1<<50), make([]byte, 32)...)); w.Code != http.StatusBadRequest {
+			t.Fatalf("truncated 1 PiB request: got %d, want 400", w.Code)
+		}
+		if w := serve(append(binary.AppendUvarint(nil, 1<<63), make([]byte, 32)...)); w.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("request longer than an int: got %d, want 413", w.Code)
 		}
 	})
 }

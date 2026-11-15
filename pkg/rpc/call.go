@@ -36,9 +36,11 @@ var responseTypeName = map[ResponseType]string{
 	ResponseTypeValue:     "VALUE",
 }
 
-// Dispatcher ...
+// Dispatcher handles a transport's received frames. Dispatch must call done
+// once, from any goroutine, when it has finished with the call; until then
+// the call counts against the transport's limit on calls in service.
 type Dispatcher interface {
-	Dispatch(*CallIn, func())
+	Dispatch(call *CallIn, done func())
 }
 
 // Call ...

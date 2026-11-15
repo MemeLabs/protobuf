@@ -27,14 +27,23 @@ var ErrMessageTooLarge = errors.New("received message too large")
 // The transport closes ReadWriter, if it is an io.Closer, when it stops; Close
 // may be called concurrently with Read and Write.
 type RWDialer struct {
-	Logger          *zap.Logger
-	ReadWriter      io.ReadWriter
+	Logger     *zap.Logger
+	ReadWriter io.ReadWriter
+	// MaxMessageBytes limits a received frame's size; a larger frame stops
+	// the transport with ErrMessageTooLarge. 0 means the default, 512 KiB;
+	// negative means unlimited.
 	MaxMessageBytes int
 	// MaxStreamBufferBytes approximately limits each outgoing call's unread
 	// responses; exceeding it fails the call with ErrStreamBufferFull. 0 means
-	// the default, the larger of 16 MiB and 4×MaxMessageBytes; negative means
-	// unbounded.
+	// the default, the larger of 16 MiB and 4×MaxMessageBytes (16 MiB if
+	// MaxMessageBytes is unlimited); negative means unbounded.
 	MaxStreamBufferBytes int
+	// MaxConcurrentCalls limits the received calls in service at once. Every
+	// received frame but a CANCEL holds a slot until its dispatcher calls
+	// done; while none is free, a request gets an ERROR response with
+	// ErrTooManyCalls and other frames are dropped. 0 means the default, 128;
+	// negative means unlimited.
+	MaxConcurrentCalls int
 }
 
 // Dial ...
@@ -63,6 +72,7 @@ func (d *RWDialer) Dial(ctx context.Context, dispatcher Dispatcher) (Transport, 
 		rw:                   d.ReadWriter,
 		maxMessageBytes:      maxMessageBytes,
 		maxStreamBufferBytes: maxStreamBufferBytes,
+		maxConcurrentCalls:   concurrentCallLimit(d.MaxConcurrentCalls),
 		dispatcher:           dispatcher,
 		rejections:           make(chan rejection, rejectionQueueLen),
 		calls: &rwParentCallMap{
@@ -78,8 +88,10 @@ type RWTransport struct {
 	cancel               context.CancelFunc
 	logger               *zap.Logger
 	rw                   io.ReadWriter
-	maxMessageBytes      int
+	maxMessageBytes      int // negative means unlimited
 	maxStreamBufferBytes int
+	maxConcurrentCalls   int // negative means unlimited
+	inService            callSlots
 	dispatcher           Dispatcher
 	rejections           chan rejection
 	calls                *rwParentCallMap
@@ -124,15 +136,10 @@ func (t *RWTransport) readLoop() error {
 		if err != nil {
 			return err
 		}
-		if l > math.MaxInt || int(l) > t.maxMessageBytes {
+		if l > math.MaxInt || (t.maxMessageBytes >= 0 && int(l) > t.maxMessageBytes) {
 			return ErrMessageTooLarge
 		}
-		if int(l) > cap(b) {
-			b = make([]byte, l)
-		}
-		b = b[:l]
-
-		if _, err := io.ReadFull(t.rw, b); err != nil {
+		if b, err = readFrame(t.rw, b, int(l)); err != nil {
 			return err
 		}
 
@@ -163,7 +170,6 @@ func (t *RWTransport) dispatch(b []byte) error {
 		return nil
 	}
 
-	var req *pb.Call
 	if env.overHeaderLimit() {
 		t.logger.Warn(
 			"rpc transport rejected frame with too many headers",
@@ -172,36 +178,61 @@ func (t *RWTransport) dispatch(b []byte) error {
 			zap.Int("headers", env.headers),
 			zap.Int("headerBytes", env.headerBytes),
 		)
-		switch string(env.method) {
-		case cancelMethod:
-			req = &pb.Call{Id: env.id, ParentId: env.parentID, Method: cancelMethod}
-		case callbackMethod:
+		switch {
+		case env.isCancel():
+			req := &pb.Call{Id: env.id, ParentId: env.parentID, Method: cancelMethod}
+			t.dispatchCall(req, len(b), noopRelease)
+		case env.isCallback():
 			if call := t.calls.CallOut(env.parentID); call != nil {
 				call.fail(ErrTooManyHeaders)
 			}
-			return nil
 		default:
 			t.reject(env.id, ErrTooManyHeaders)
-			return nil
 		}
-	} else {
-		req = &pb.Call{}
-		if err := envelopeUnmarshal.Unmarshal(b, req); err != nil {
-			t.logger.Warn(
-				"rpc transport dropped malformed frame",
-				zap.Int("length", len(b)),
-				zap.Error(err),
-			)
-			return nil
-		}
+		return nil
 	}
 
+	release := noopRelease
+	if !env.isCancel() {
+		if !t.inService.acquire(t.maxConcurrentCalls) {
+			t.logger.Warn(
+				"rpc transport rejected frame over the call limit",
+				zap.Uint64("id", env.id),
+				zap.ByteString("method", env.method),
+			)
+			if !env.isCallback() {
+				t.reject(env.id, ErrTooManyCalls)
+			}
+			return nil
+		}
+		release = t.inService.releaser()
+	}
+
+	req := &pb.Call{}
+	if err := envelopeUnmarshal.Unmarshal(b, req); err != nil {
+		release()
+		t.logger.Warn(
+			"rpc transport dropped malformed frame",
+			zap.Int("length", len(b)),
+			zap.Error(err),
+		)
+		return nil
+	}
+	t.dispatchCall(req, len(b), release)
+	return nil
+}
+
+// dispatchCall dispatches req, received in a frame of frameBytes, and calls
+// release when the dispatcher is done with it.
+func (t *RWTransport) dispatchCall(req *pb.Call, frameBytes int, release func()) {
 	call := NewCallIn(t.ctx, req, t.calls.Accessor(req.ParentId), t.send)
-	call.frameBytes = len(b)
+	call.frameBytes = frameBytes
 
 	t.calls.SetCallIn(req.Id, call)
-	t.dispatcher.Dispatch(call, func() { t.calls.DeleteCallIn(req.Id) })
-	return nil
+	t.dispatcher.Dispatch(call, func() {
+		t.calls.DeleteCallIn(req.Id)
+		release()
+	})
 }
 
 // rejectionQueueLen is how many rejections may wait to be sent.

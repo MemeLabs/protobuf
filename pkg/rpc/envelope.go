@@ -32,6 +32,14 @@ func (e *envelope) overHeaderLimit() bool {
 	return e.headers > MaxHeaders || e.headerBytes > MaxHeaderBytes
 }
 
+func (e *envelope) isCancel() bool {
+	return string(e.method) == cancelMethod
+}
+
+func (e *envelope) isCallback() bool {
+	return string(e.method) == callbackMethod
+}
+
 // scanEnvelope reads the top-level fields of the encoded pb.Call b without
 // allocating. It fails only where proto.Unmarshal into a pb.Call fails, and
 // where proto.Unmarshal succeeds the fields match its result.
