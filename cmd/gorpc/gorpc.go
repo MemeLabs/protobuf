@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -41,30 +42,36 @@ func (p *GoRPCModule) Name() string { return "gorpc" }
 
 // Execute ...
 func (p *GoRPCModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.Package) []pgs.Artifact {
-	ok := true
+	// sorted, so errors come out in a stable order
+	files := make([]pgs.File, 0, len(targets))
 	for _, t := range targets {
-		ok = p.checkMethods(t) && ok
+		files = append(files, t)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].InputPath() < files[j].InputPath() })
+
+	ok := true
+	for _, f := range files {
+		ok = p.checkMethods(f) && ok
 	}
 	if !ok {
 		return p.Artifacts()
 	}
 
-	for _, t := range targets {
-		p.generate(t)
+	for _, f := range files {
+		p.generate(f)
 	}
 
 	return p.Artifacts()
 }
 
-// checkMethods reports an error for each of f's client-streaming (or
-// bidirectional) methods, which pkg/rpc doesn't support, and returns false
-// if there were any.
+// checkMethods adds an error for each client-streaming or bidirectional
+// method in f, which pkg/rpc doesn't support, and reports whether f had none.
 func (p *GoRPCModule) checkMethods(f pgs.File) bool {
 	ok := true
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
 			if m.ClientStreaming() {
-				p.AddError(fmt.Sprintf("%s: %s.%s: client-streaming methods are not supported (only unary and server-streaming)", f.InputPath(), p.fullName(s), m.Name()))
+				p.AddError(fmt.Sprintf("%s: %s.%s: client-streaming and bidirectional methods are not supported (only unary and server-streaming)", f.InputPath(), p.fullName(s), m.Name()))
 				ok = false
 			}
 		}

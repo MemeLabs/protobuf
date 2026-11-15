@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/MemeLabs/protobuf/pkg/pgsutil"
@@ -29,36 +30,44 @@ func (p *TSRPCModule) Name() string { return "tsrpc" }
 
 // Execute ...
 func (p *TSRPCModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.Package) []pgs.Artifact {
-	ok := true
+	// the targets' packages' files, imported ones too, sorted for stable errors
+	var files []pgs.File
 	for _, pkg := range pkgs {
-		for _, f := range pkg.Files() {
-			ok = p.checkMethods(f) && ok
-		}
+		files = append(files, pkg.Files()...)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].InputPath() < files[j].InputPath() })
+
+	ok := true
+	for _, f := range files {
+		ok = p.checkMethods(f) && ok
 	}
 	if !ok {
 		return p.Artifacts()
 	}
 
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files() {
-			if len(f.Services()) != 0 {
-				p.generate(f)
-			}
+	for _, f := range files {
+		if len(f.Services()) != 0 {
+			p.generate(f)
 		}
 	}
 
 	return p.Artifacts()
 }
 
-// checkMethods reports an error for each of f's client-streaming (or
-// bidirectional) methods, which src/rpc doesn't support, and returns false
-// if there were any.
+// checkMethods adds an error for each client-streaming or bidirectional
+// method in f, which src/rpc doesn't support, and reports whether f had none.
+// Errors for a file that isn't a build target are marked "(imported)".
 func (p *TSRPCModule) checkMethods(f pgs.File) bool {
+	name := f.InputPath().String()
+	if !f.BuildTarget() {
+		name += " (imported)"
+	}
+
 	ok := true
 	for _, s := range f.Services() {
 		for _, m := range s.Methods() {
 			if m.ClientStreaming() {
-				p.AddError(fmt.Sprintf("%s: %s.%s: client-streaming methods are not supported (only unary and server-streaming)", f.InputPath(), strings.TrimPrefix(s.FullyQualifiedName(), "."), m.Name()))
+				p.AddError(fmt.Sprintf("%s: %s.%s: client-streaming and bidirectional methods are not supported (only unary and server-streaming)", name, strings.TrimPrefix(s.FullyQualifiedName(), "."), m.Name()))
 				ok = false
 			}
 		}
