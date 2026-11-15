@@ -15,10 +15,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// NewHTTPServer ...
-func NewHTTPServer(logger *zap.Logger) *HTTPServer {
+// NewHTTPServer returns an HTTPServer with no methods.
+func NewHTTPServer(logger *zap.Logger, opts ...Option) *HTTPServer {
 	return &HTTPServer{
-		ServiceDispatcher: NewServiceDispatcher(logger),
+		ServiceDispatcher: NewServiceDispatcher(logger, opts...),
 	}
 }
 

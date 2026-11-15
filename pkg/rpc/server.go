@@ -28,10 +28,11 @@ var (
 	}, []string{"method"})
 )
 
-// NewServer ...
-func NewServer(logger *zap.Logger, dialer Dialer) *Server {
+// NewServer returns a Server that serves the methods registered on it over
+// connections from dialer.
+func NewServer(logger *zap.Logger, dialer Dialer, opts ...Option) *Server {
 	return &Server{
-		ServiceDispatcher: NewServiceDispatcher(logger),
+		ServiceDispatcher: NewServiceDispatcher(logger, opts...),
 		dialer:            dialer,
 	}
 }
@@ -53,18 +54,21 @@ func (s *Server) Listen(ctx context.Context) error {
 	return transport.Listen()
 }
 
-// NewServiceDispatcher ...
-func NewServiceDispatcher(logger *zap.Logger) *ServiceDispatcher {
+// NewServiceDispatcher returns a ServiceDispatcher with no methods.
+func NewServiceDispatcher(logger *zap.Logger, opts ...Option) *ServiceDispatcher {
+	o := newOptions(opts)
 	return &ServiceDispatcher{
-		logger:  logger,
-		methods: map[string]serviceMethod{},
+		logger:    logger,
+		methods:   map[string]serviceMethod{},
+		unmarshal: o.unmarshal,
 	}
 }
 
 // ServiceDispatcher ...
 type ServiceDispatcher struct {
-	logger  *zap.Logger
-	methods map[string]serviceMethod
+	logger    *zap.Logger
+	methods   map[string]serviceMethod
+	unmarshal UnmarshalFunc
 }
 
 // RegisterMethod ...
@@ -132,7 +136,7 @@ func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 	}(time.Now())
 
 	arg := reflect.New(method.arg)
-	if err := call.Argument(arg.Interface().(proto.Message)); err != nil {
+	if err := unmarshalOrDefault(h.unmarshal)(call.req.Argument, arg.Interface().(proto.Message)); err != nil {
 		call.returnError(err)
 		return
 	}

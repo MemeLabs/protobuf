@@ -31,7 +31,8 @@ var (
 // NewClient dials a transport and listens on it. The client owns the
 // transport and stops it on Close or when garbage collected. Calls pending
 // when the transport stops, or made after, fail with ErrTransportClosed.
-func NewClient(logger *zap.Logger, dialer Dialer) (*Client, error) {
+func NewClient(logger *zap.Logger, dialer Dialer, opts ...Option) (*Client, error) {
+	o := newOptions(opts)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	transport, err := dialer.Dial(ctx, &clientDispatcher{})
@@ -54,6 +55,7 @@ func NewClient(logger *zap.Logger, dialer Dialer) (*Client, error) {
 		logger:    logger,
 		transport: transport,
 		cancel:    cancel,
+		unmarshal: o.unmarshal,
 	}
 
 	runtime.SetFinalizer(c, clientFinalizer)
@@ -70,6 +72,7 @@ type Client struct {
 	logger    *zap.Logger
 	transport Transport
 	cancel    context.CancelFunc
+	unmarshal UnmarshalFunc
 }
 
 // Close stops the client's transport without waiting for it to finish.
@@ -122,6 +125,7 @@ func (c *Client) CallUnary(ctx context.Context, method string, req, res proto.Me
 	if err != nil {
 		return err
 	}
+	call.unmarshal = c.unmarshal
 
 	return c.transport.Call(call, func() error {
 		return c.handleError(call, call.ReadResponse(res))
@@ -136,6 +140,7 @@ func (c *Client) CallStreaming(ctx context.Context, method string, req proto.Mes
 	if err != nil {
 		return err
 	}
+	call.unmarshal = c.unmarshal
 
 	return c.transport.Call(call, func() error {
 		return c.handleError(call, call.ReadResponseStream(res))

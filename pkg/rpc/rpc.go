@@ -65,10 +65,10 @@ func transportClosedError(cause error) error {
 	return fmt.Errorf("%w: %v", ErrTransportClosed, cause)
 }
 
-func unmarshalResponse(kind pb.Call_Kind, b []byte, v proto.Message) error {
+func unmarshalResponse(kind pb.Call_Kind, b []byte, v proto.Message, unmarshal UnmarshalFunc) error {
 	switch kind {
 	case pb.Call_CALL_KIND_DEFAULT:
-		return proto.Unmarshal(b, v)
+		return unmarshal(b, v)
 	case pb.Call_CALL_KIND_ERROR:
 		ev := &pb.Error{}
 		if err := envelopeUnmarshal.Unmarshal(b, ev); err != nil {

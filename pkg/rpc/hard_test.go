@@ -623,3 +623,207 @@ func TestHardRejectionQueue(t *testing.T) {
 		t.Fatalf("%d rejection senders running, %d before", hardGoroutines(fn), before)
 	}
 }
+
+// hardConn connects a Client made with clientOpts to a Server made with
+// serverOpts over a pipe pair.
+func hardConn(t *testing.T, register func(*ServiceDispatcher), serverOpts []Option, dialer func(*RWDialer), clientOpts ...Option) *Client {
+	t.Helper()
+	logger := zap.NewNop()
+	clientRW, serverRW := cliNewPipePair(t)
+
+	d := &RWDialer{Logger: logger, ReadWriter: serverRW}
+	if dialer != nil {
+		dialer(d)
+	}
+	s := NewServer(logger, d, serverOpts...)
+	register(s.ServiceDispatcher)
+	ctx, cancel := context.WithCancel(context.Background())
+	go s.Listen(ctx)
+
+	c, err := NewClient(logger, &RWDialer{Logger: logger, ReadWriter: clientRW}, clientOpts...)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c.Close()
+		cancel()
+	})
+	return c
+}
+
+// hardNested returns a message nested depth levels deep, itself included.
+func hardNested(depth int) *descriptorpb.DescriptorProto {
+	m := &descriptorpb.DescriptorProto{}
+	for cur := m; depth > 1; depth-- {
+		next := &descriptorpb.DescriptorProto{}
+		cur.NestedType = []*descriptorpb.DescriptorProto{next}
+		cur = next
+	}
+	return m
+}
+
+// hardNester registers hard.depth, which accepts any nesting and replies
+// with the nesting its request's Code asks for.
+func hardNester(d *ServiceDispatcher) {
+	d.RegisterMethod("hard.depth", func(ctx context.Context, req *descriptorpb.DescriptorProto) (*pb.Error, error) {
+		return &pb.Error{Message: "ok"}, nil
+	})
+	d.RegisterMethod("hard.deep", func(ctx context.Context, req *pb.Error) (*descriptorpb.DescriptorProto, error) {
+		return hardNested(int(req.Code)), nil
+	})
+	d.RegisterMethod("hard.deepstream", func(ctx context.Context, req *pb.Error) (<-chan *descriptorpb.DescriptorProto, error) {
+		ch := make(chan *descriptorpb.DescriptorProto, 1)
+		ch <- hardNested(int(req.Code))
+		close(ch)
+		return ch, nil
+	})
+}
+
+// hardDepthError is in protobuf-go's error for nesting over the limit.
+const hardDepthError = "exceeded maximum recursion depth"
+
+func hardCallTimeout(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// The default decoder accepts nesting up to 100 deep, on servers and
+// clients.
+func TestHardRecursionDefault(t *testing.T) {
+	c := hardConn(t, hardNester, nil, nil)
+
+	t.Run("argument", func(t *testing.T) {
+		if err := c.CallUnary(hardCallTimeout(t), "hard.depth", hardNested(100), &pb.Error{}); err != nil {
+			t.Fatalf("depth 100: %v", err)
+		}
+		var e *pb.Error
+		if err := c.CallUnary(hardCallTimeout(t), "hard.depth", hardNested(101), &pb.Error{}); !errors.As(err, &e) || !strings.Contains(e.Message, hardDepthError) {
+			t.Fatalf("depth 101: got %v, want an ERROR response containing %q", err, hardDepthError)
+		}
+	})
+
+	t.Run("response", func(t *testing.T) {
+		if err := c.CallUnary(hardCallTimeout(t), "hard.deep", &pb.Error{Code: 100}, &descriptorpb.DescriptorProto{}); err != nil {
+			t.Fatalf("depth 100: %v", err)
+		}
+		if err := c.CallUnary(hardCallTimeout(t), "hard.deep", &pb.Error{Code: 101}, &descriptorpb.DescriptorProto{}); err == nil || !strings.Contains(err.Error(), hardDepthError) {
+			t.Fatalf("depth 101: got %v, want %q", err, hardDepthError)
+		}
+		ch := make(chan *descriptorpb.DescriptorProto, 1)
+		if err := c.CallStreaming(hardCallTimeout(t), "hard.deepstream", &pb.Error{Code: 101}, ch); err == nil || !strings.Contains(err.Error(), hardDepthError) {
+			t.Fatalf("stream of depth 101: got %v, want %q", err, hardDepthError)
+		}
+	})
+
+	t.Run("http", func(t *testing.T) {
+		s := NewHTTPServer(zap.NewNop())
+		hardNester(s.ServiceDispatcher)
+		for depth, wantKind := range map[int]pb.Call_Kind{100: pb.Call_CALL_KIND_DEFAULT, 101: pb.Call_CALL_KIND_ERROR} {
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, srvHTTPRequest(t, context.Background(), &pb.Call{Id: 1, Method: "hard.depth", Argument: srvMarshal(t, hardNested(depth))}))
+			if res := srvHTTPDecode(t, w.Body.Bytes()); res.Kind != wantKind {
+				t.Errorf("depth %d: got %v, want %v", depth, res.Kind, wantKind)
+			}
+		}
+	})
+
+	t.Run("CallIn.Argument", func(t *testing.T) {
+		for depth, ok := range map[int]bool{100: true, 101: false} {
+			call := NewCallIn(context.Background(), &pb.Call{Argument: srvMarshal(t, hardNested(depth))}, noopParentCallAccessor{}, nil)
+			if err := call.Argument(&descriptorpb.DescriptorProto{}); (err == nil) != ok {
+				t.Errorf("depth %d: got %v", depth, err)
+			}
+		}
+	})
+}
+
+// hardRecorder is an UnmarshalFunc that records what it decodes and fails
+// for messages whose bytes equal fail.
+type hardRecorder struct {
+	calls atomic.Int32
+	last  atomic.Pointer[[]byte]
+	fail  []byte
+}
+
+var errHardUnmarshal = errors.New("hard: unmarshal refused")
+
+func (r *hardRecorder) unmarshal(b []byte, m proto.Message) error {
+	r.calls.Add(1)
+	b = bytes.Clone(b)
+	r.last.Store(&b)
+	if r.fail != nil && bytes.Equal(b, r.fail) {
+		return errHardUnmarshal
+	}
+	return proto.UnmarshalOptions{RecursionLimit: 1000}.Unmarshal(b, m)
+}
+
+// WithUnmarshal replaces the default decoder on servers, HTTP servers and
+// clients.
+func TestHardUnmarshalHook(t *testing.T) {
+	refuse := &pb.Error{Message: "refuse"}
+
+	t.Run("server", func(t *testing.T) {
+		hook := &hardRecorder{fail: srvMarshal(t, refuse)}
+		c := hardConn(t, func(d *ServiceDispatcher) {
+			hardNester(d)
+			d.RegisterMethod("hard.echo", func(ctx context.Context, req *pb.Error) (*pb.Error, error) { return req, nil })
+		}, []Option{WithUnmarshal(hook.unmarshal)}, nil)
+
+		if err := c.CallUnary(hardCallTimeout(t), "hard.depth", hardNested(200), &pb.Error{}); err != nil {
+			t.Fatalf("depth 200 with the hook: %v", err)
+		}
+		if got, want := *hook.last.Load(), srvMarshal(t, hardNested(200)); !bytes.Equal(got, want) {
+			t.Fatalf("hook got %x, want the argument %x", got, want)
+		}
+		var e *pb.Error
+		if err := c.CallUnary(hardCallTimeout(t), "hard.echo", refuse, &pb.Error{}); !errors.As(err, &e) || e.Message != errHardUnmarshal.Error() {
+			t.Fatalf("got %v, want the hook's error", err)
+		}
+	})
+
+	t.Run("client", func(t *testing.T) {
+		hook := &hardRecorder{fail: srvMarshal(t, &pb.Error{Message: "ok"})}
+		c := hardConn(t, hardNester, nil, nil, WithUnmarshal(hook.unmarshal))
+
+		if err := c.CallUnary(hardCallTimeout(t), "hard.deep", &pb.Error{Code: 200}, &descriptorpb.DescriptorProto{}); err != nil {
+			t.Fatalf("depth 200 with the hook: %v", err)
+		}
+		if got, want := *hook.last.Load(), srvMarshal(t, hardNested(200)); !bytes.Equal(got, want) {
+			t.Fatalf("hook got %x, want the response %x", got, want)
+		}
+		if err := c.CallUnary(hardCallTimeout(t), "hard.depth", &descriptorpb.DescriptorProto{}, &pb.Error{}); !errors.Is(err, errHardUnmarshal) {
+			t.Fatalf("got %v, want the hook's error", err)
+		}
+
+		ch := make(chan *descriptorpb.DescriptorProto, 1)
+		if err := c.CallStreaming(hardCallTimeout(t), "hard.deepstream", &pb.Error{Code: 200}, ch); err != nil {
+			t.Fatalf("stream of depth 200 with the hook: %v", err)
+		}
+		if len(ch) != 1 {
+			t.Fatalf("stream delivered %d messages, want 1", len(ch))
+		}
+	})
+
+	t.Run("http", func(t *testing.T) {
+		hook := &hardRecorder{}
+		s := NewHTTPServer(zap.NewNop(), WithUnmarshal(hook.unmarshal))
+		hardNester(s.ServiceDispatcher)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, srvHTTPRequest(t, context.Background(), &pb.Call{Id: 1, Method: "hard.depth", Argument: srvMarshal(t, hardNested(200))}))
+		if res := srvHTTPDecode(t, w.Body.Bytes()); res.Kind != pb.Call_CALL_KIND_DEFAULT || hook.calls.Load() != 1 {
+			t.Fatalf("got %v after %d hook calls, want DEFAULT after 1", res.Kind, hook.calls.Load())
+		}
+	})
+
+	t.Run("nil", func(t *testing.T) {
+		c := hardConn(t, hardNester, []Option{WithUnmarshal(nil), nil}, nil, WithUnmarshal(nil))
+		if err := c.CallUnary(hardCallTimeout(t), "hard.depth", hardNested(101), &pb.Error{}); err == nil {
+			t.Fatal("depth 101 accepted with WithUnmarshal(nil)")
+		}
+		if err := c.CallUnary(hardCallTimeout(t), "hard.deep", &pb.Error{Code: 101}, &descriptorpb.DescriptorProto{}); err == nil {
+			t.Fatal("depth 101 response accepted with WithUnmarshal(nil)")
+		}
+	})
+}

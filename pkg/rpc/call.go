@@ -117,9 +117,10 @@ func (c *CallIn) ResponseType() ResponseType {
 	return c.responseType
 }
 
-// Argument ...
+// Argument decodes the call's argument into arg with
+// proto.UnmarshalOptions{RecursionLimit: 100}.
 func (c *CallIn) Argument(arg proto.Message) error {
-	return proto.Unmarshal(c.req.Argument, arg)
+	return defaultUnmarshal(c.req.Argument, arg)
 }
 
 func (c *CallIn) sendResponse(kind pb.Call_Kind, res proto.Message) error {
@@ -224,6 +225,8 @@ type CallOut struct {
 	parentID uint64
 	method   string
 	arg      proto.Message
+
+	unmarshal UnmarshalFunc // decodes responses; nil means the default
 
 	mu            sync.Mutex
 	queue         []queuedResponse
@@ -341,7 +344,9 @@ func (c *CallOut) nextResponse() (*pb.Call, error) {
 	return r.req, nil
 }
 
-// ReadResponse ...
+// ReadResponse waits for the next response and decodes it into out, with
+// the Client's UnmarshalFunc for calls made by a Client and with
+// proto.UnmarshalOptions{RecursionLimit: 100} otherwise.
 func (c *CallOut) ReadResponse(out proto.Message) error {
 	ctx := c.Context()
 	for {
@@ -351,7 +356,7 @@ func (c *CallOut) ReadResponse(out proto.Message) error {
 
 		r, err := c.nextResponse()
 		if r != nil {
-			return unmarshalResponse(r.Kind, r.Argument, out)
+			return unmarshalResponse(r.Kind, r.Argument, out, unmarshalOrDefault(c.unmarshal))
 		}
 		if err != nil {
 			return err
