@@ -4,7 +4,7 @@ import Writer from "@memelabs/protobuf/lib/pb/writer";
 import {
   Timestamp as google_protobuf_Timestamp,
   type ITimestamp as google_protobuf_ITimestamp,
-} from "../../../google/protobuf/timestamp";
+} from "../../../google/protobuf/timestamp.pb";
 
 export type ITickRequest = {
   times?: number;

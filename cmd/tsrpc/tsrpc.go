@@ -77,7 +77,7 @@ func (p *TSRPCModule) checkMethods(f pgs.File) bool {
 
 func (p *TSRPCModule) generate(f pgs.File) {
 	path := strings.ReplaceAll(strings.TrimPrefix(f.FullyQualifiedName(), "."), ".", "/")
-	name := fmt.Sprintf("%s/%s_rpc.ts", path, f.File().InputPath().BaseName())
+	name := fmt.Sprintf("%s/%s_rpc.pb.ts", path, f.File().InputPath().BaseName())
 
 	g := &generator{
 		runtimePath: p.c.RuntimePath(),
@@ -133,7 +133,7 @@ func (g *generator) generateImports(f pgs.File) {
 	// declared, so a value import of it wouldn't resolve
 	g.Linef(`import type { default as strims_rpc_Host%s } from "%srpc/host";`, hostExports, root)
 	g.Linef(`import type strims_rpc_Service from "%srpc/service";`, root)
-	g.Linef(`import type { Call as strims_rpc_Call } from "%sapis/strims/rpc/rpc";`, root)
+	g.Linef(`import type { Call as strims_rpc_Call } from "%sapis/strims/rpc/rpc.pb";`, root)
 
 EachService:
 	for _, s := range f.Services() {

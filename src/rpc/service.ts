@@ -1,4 +1,4 @@
-import { Call } from "../apis/strims/rpc/rpc";
+import { Call } from "../apis/strims/rpc/rpc.pb";
 import { MessageClass } from "../pb/message";
 import { Readable as GenericReadable } from "./stream";
 

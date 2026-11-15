@@ -7,7 +7,7 @@ import {
   Close,
   Error as RPCError,
   Undefined,
-} from "../apis/strims/rpc/rpc";
+} from "../apis/strims/rpc/rpc.pb";
 import { Message, MessageClass } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";

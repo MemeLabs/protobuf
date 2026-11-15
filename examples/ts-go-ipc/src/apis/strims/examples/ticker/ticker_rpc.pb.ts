@@ -1,13 +1,13 @@
 import type { default as strims_rpc_Host } from "@memelabs/protobuf/lib/rpc/host";
 import type strims_rpc_Service from "@memelabs/protobuf/lib/rpc/service";
-import type { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc";
+import type { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc.pb";
 import type { Readable as GenericReadable } from "@memelabs/protobuf/lib/rpc/stream";
 
 import {
   type ITickRequest as strims_examples_ticker_ITickRequest,
   TickRequest as strims_examples_ticker_TickRequest,
   TickResponse as strims_examples_ticker_TickResponse,
-} from "./ticker";
+} from "./ticker.pb";
 
 export interface TickerService {
   tick(req: strims_examples_ticker_TickRequest, call: strims_rpc_Call): GenericReadable<strims_examples_ticker_TickResponse>;

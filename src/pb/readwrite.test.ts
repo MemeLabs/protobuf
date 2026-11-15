@@ -1,6 +1,6 @@
 import assert from "assert";
 
-import { TestMessage, TestMessage_TestEnum } from "../apis/strims/test/message";
+import { TestMessage, TestMessage_TestEnum } from "../apis/strims/test/message.pb";
 import Reader from "./reader";
 import Writer from "./writer";
 

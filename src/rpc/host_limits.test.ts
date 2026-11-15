@@ -2,14 +2,14 @@ import assert from "assert";
 import Module from "module";
 import { PassThrough, Readable, Writable } from "stream";
 
-import { Call, Call_Kind, Cancel, ICall, Error as RPCError } from "../apis/strims/rpc/rpc";
-import { TestMessage } from "../apis/strims/test/message";
+import { Call, Call_Kind, Cancel, ICall, Error as RPCError } from "../apis/strims/rpc/rpc.pb";
+import { TestMessage } from "../apis/strims/test/message.pb";
 import {
   RPCCallStreamRequest,
   RPCCallStreamResponse,
   RPCCallUnaryRequest,
   RPCCallUnaryResponse,
-} from "../apis/strims/test/rpc";
+} from "../apis/strims/test/rpc.pb";
 import { Message, MessageClass } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";

@@ -43,7 +43,7 @@ func (p *TSModule) Execute(targets map[string]pgs.File, pkgs map[string]pgs.Pack
 
 func (p *TSModule) generate(f pgs.File) {
 	path := strings.ReplaceAll(strings.TrimPrefix(f.FullyQualifiedName(), "."), ".", "/")
-	name := fmt.Sprintf("%s/%s.ts", path, f.File().InputPath().BaseName())
+	name := fmt.Sprintf("%s/%s.pb.ts", path, f.File().InputPath().BaseName())
 
 	g := &generator{
 		runtimePath: p.c.RuntimePath(),

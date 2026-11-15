@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	pgs "github.com/lyft/protoc-gen-star/v2"
@@ -195,13 +197,33 @@ func TestRender(t *testing.T) {
 	cases := []struct {
 		name      string
 		req       *plugin.CodeGeneratorRequest
+		param     string
 		wantErr   string
 		wantFiles []string
+		// modules the generated file must import, each with a whole line
+		// `} from "<module>";`
+		wantImports []string
 	}{
 		{
 			name:      "valid",
 			req:       request([]string{"x/a.proto"}, protoFile{name: "x/a.proto", svc: "A", methods: []*descriptor.MethodDescriptorProto{unary, serverStream}}),
-			wantFiles: []string{"x/a_rpc.ts"},
+			wantFiles: []string{"x/a_rpc.pb.ts"},
+			wantImports: []string{
+				"@memelabs/protobuf/lib/apis/strims/rpc/rpc.pb",
+				"./msg.pb",
+			},
+		},
+		{
+			name:      "runtime=self",
+			req:       request([]string{"x/a.proto"}, protoFile{name: "x/a.proto", svc: "A", methods: []*descriptor.MethodDescriptorProto{unary}}),
+			param:     "runtime=self",
+			wantFiles: []string{"x/a_rpc.pb.ts"},
+			// from src/apis/x/, with the runtime's modules in src/
+			wantImports: []string{
+				"../../apis/strims/rpc/rpc.pb",
+				"../../rpc/host",
+				"./msg.pb",
+			},
 		},
 		{
 			name: "offenders",
@@ -216,6 +238,9 @@ func TestRender(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if c.param != "" {
+				c.req.Parameter = proto.String(c.param)
+			}
 			in, err := proto.Marshal(c.req)
 			if err != nil {
 				t.Fatal(err)
@@ -238,6 +263,12 @@ func TestRender(t *testing.T) {
 			var files []string
 			for _, f := range res.GetFile() {
 				files = append(files, f.GetName())
+				lines := strings.Split(f.GetContent(), "\n")
+				for _, m := range c.wantImports {
+					if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasSuffix(l, `from "`+m+`";`) }) {
+						t.Errorf("%s doesn't import %q:\n%s", f.GetName(), m, f.GetContent())
+					}
+				}
 			}
 			if !reflect.DeepEqual(files, c.wantFiles) {
 				t.Errorf("files = %q, want %q", files, c.wantFiles)

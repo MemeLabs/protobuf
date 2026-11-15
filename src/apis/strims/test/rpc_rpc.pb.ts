@@ -1,6 +1,6 @@
 import type { default as strims_rpc_Host, UnaryCallOptions as strims_rpc_UnaryCallOptions } from "../../../rpc/host";
 import type strims_rpc_Service from "../../../rpc/service";
-import type { Call as strims_rpc_Call } from "../../../apis/strims/rpc/rpc";
+import type { Call as strims_rpc_Call } from "../../../apis/strims/rpc/rpc.pb";
 import type { Readable as GenericReadable } from "../../../rpc/stream";
 
 import {
@@ -10,7 +10,7 @@ import {
   type IRPCCallStreamRequest as strims_test_IRPCCallStreamRequest,
   RPCCallStreamRequest as strims_test_RPCCallStreamRequest,
   RPCCallStreamResponse as strims_test_RPCCallStreamResponse,
-} from "./rpc";
+} from "./rpc.pb";
 
 export interface RPCTestService {
   callUnary(req: strims_test_RPCCallUnaryRequest, call: strims_rpc_Call): Promise<strims_test_RPCCallUnaryResponse> | strims_test_RPCCallUnaryResponse;

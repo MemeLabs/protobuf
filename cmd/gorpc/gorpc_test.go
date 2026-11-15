@@ -180,6 +180,12 @@ func TestExecuteRejectsClientStreaming(t *testing.T) {
 	}
 }
 
+// withParameter sets req's plugin parameter, as protoc does for --gorpc_opt.
+func withParameter(req *plugin.CodeGeneratorRequest, p string) *plugin.CodeGeneratorRequest {
+	req.Parameter = proto.String(p)
+	return req
+}
+
 // TestRender runs requests through the plugin as main does, and decodes the
 // response protoc would get.
 func TestRender(t *testing.T) {
@@ -192,7 +198,12 @@ func TestRender(t *testing.T) {
 		{
 			name:      "valid",
 			req:       request([]string{"x/a.proto"}, protoFile{name: "x/a.proto", svc: "A", methods: []*descriptor.MethodDescriptorProto{unary, serverStream}}),
-			wantFiles: []string{"example.com/x/a.pb.rpc.go"},
+			wantFiles: []string{"example.com/x/a_rpc.pb.go"},
+		},
+		{
+			name:      "module prefix trimmed",
+			req:       withParameter(request([]string{"x/a.proto"}, protoFile{name: "x/a.proto", svc: "A", methods: []*descriptor.MethodDescriptorProto{unary}}), "module=example.com"),
+			wantFiles: []string{"x/a_rpc.pb.go"},
 		},
 		{
 			name: "offenders",

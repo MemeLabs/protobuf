@@ -84,7 +84,7 @@ func (p *GoRPCModule) generate(f pgs.File) {
 		return
 	}
 
-	name := p.ctx.OutputPath(f).SetExt(".rpc.go").String()
+	name := strings.TrimSuffix(p.ctx.OutputPath(f).String(), ".pb.go") + "_rpc.pb.go"
 	name = strings.TrimPrefix(strings.TrimPrefix(name, p.ctx.Params().Str("module")), "/")
 	p.AddGeneratorTemplateFile(name, p.tpl, f)
 }

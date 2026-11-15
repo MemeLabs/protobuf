@@ -1,8 +1,8 @@
 import assert from "assert";
 import { PassThrough } from "stream";
 
-import { Call, Call_Kind, ICall, Error as RPCError } from "../apis/strims/rpc/rpc";
-import { Bar_Foo } from "../apis/strims/test/message";
+import { Call, Call_Kind, ICall, Error as RPCError } from "../apis/strims/rpc/rpc.pb";
+import { Bar_Foo } from "../apis/strims/test/message.pb";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import Host from "./host";

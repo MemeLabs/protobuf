@@ -8,7 +8,7 @@ import {
   type IFoo as strims_test_internal_IFoo,
   Bar_Foo as strims_test_internal_Bar_Foo,
   type Bar_IFoo as strims_test_internal_Bar_IFoo,
-} from "./internal/internal";
+} from "./internal/internal.pb";
 
 export type ITestMessage = {
   int32Value?: number;

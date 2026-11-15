@@ -1,6 +1,6 @@
 import type { default as strims_rpc_Host, UnaryCallOptions as strims_rpc_UnaryCallOptions } from "@memelabs/protobuf/lib/rpc/host";
 import type strims_rpc_Service from "@memelabs/protobuf/lib/rpc/service";
-import type { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc";
+import type { Call as strims_rpc_Call } from "@memelabs/protobuf/lib/apis/strims/rpc/rpc.pb";
 import type { Readable as GenericReadable } from "@memelabs/protobuf/lib/rpc/stream";
 
 import {
@@ -10,7 +10,7 @@ import {
   type IStreamRequest as strims_examples_tester_IStreamRequest,
   StreamRequest as strims_examples_tester_StreamRequest,
   StreamResponse as strims_examples_tester_StreamResponse,
-} from "./tester";
+} from "./tester.pb";
 
 export interface TesterService {
   unary(req: strims_examples_tester_UnaryRequest, call: strims_rpc_Call): Promise<strims_examples_tester_UnaryResponse> | strims_examples_tester_UnaryResponse;

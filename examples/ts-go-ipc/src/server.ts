@@ -4,10 +4,10 @@ import Host from "@memelabs/protobuf/lib/rpc/host";
 import ServiceRegistry from "@memelabs/protobuf/lib/rpc/service";
 import { Readable } from "@memelabs/protobuf/lib/rpc/stream";
 
-import { GreetRequest, GreetResponse } from "./apis/strims/examples/greeter/greeter";
-import { registerGreeterService } from "./apis/strims/examples/greeter/greeter_rpc";
-import { TickRequest, TickResponse } from "./apis/strims/examples/ticker/ticker";
-import { registerTickerService } from "./apis/strims/examples/ticker/ticker_rpc";
+import { registerGreeterService } from "./apis/strims/examples/greeter/greeter_rpc.pb";
+import { GreetRequest, GreetResponse } from "./apis/strims/examples/greeter/greeter.pb";
+import { registerTickerService } from "./apis/strims/examples/ticker/ticker_rpc.pb";
+import { TickRequest, TickResponse } from "./apis/strims/examples/ticker/ticker.pb";
 
 class Service {
   greet(req: GreetRequest): GreetResponse {

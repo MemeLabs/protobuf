@@ -1,8 +1,8 @@
 import assert from "assert";
 
-import { Call, Error as RPCError } from "../apis/strims/rpc/rpc";
-import { Bar_Foo, TestMessage, TestMessage_EmbeddedMessage } from "../apis/strims/test/message";
-import { MapNode } from "../apis/strims/test/recursion";
+import { Call, Error as RPCError } from "../apis/strims/rpc/rpc.pb";
+import { Bar_Foo, TestMessage, TestMessage_EmbeddedMessage } from "../apis/strims/test/message.pb";
+import { MapNode } from "../apis/strims/test/recursion.pb";
 import Reader from "./reader";
 import Writer from "./writer";
 

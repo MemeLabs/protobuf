@@ -3,8 +3,8 @@ import path from "path";
 
 import Host from "@memelabs/protobuf/lib/rpc/host";
 
-import { GreeterClient } from "./apis/strims/examples/greeter/greeter_rpc";
-import { TickerClient } from "./apis/strims/examples/ticker/ticker_rpc";
+import { GreeterClient } from "./apis/strims/examples/greeter/greeter_rpc.pb";
+import { TickerClient } from "./apis/strims/examples/ticker/ticker_rpc.pb";
 
 const proc =
   process.argv[process.argv.length - 1] === "go"
