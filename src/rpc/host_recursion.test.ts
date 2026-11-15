@@ -10,6 +10,16 @@ import ServiceRegistry from "./service";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// Resolves once cond() holds, checking after each timer turn; fails after ms.
+const waitFor = async (cond: () => boolean, what: string, ms = 5000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    await sleep(1);
+    if (cond()) return;
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`);
+  }
+};
+
 // A chain of levels Bar_Foo messages, each holding the next as testBarFoo.
 const chain = (levels: number): Uint8Array => {
   let b: Uint8Array = new Uint8Array();
@@ -63,7 +73,7 @@ describe("Host recursion limit", function () {
     send({ id: BigInt(1), method: "deep", argument: chain(101) });
     send({ id: BigInt(2), method: "deep", argument: chain(100) });
     send({ id: BigInt(3), method: "deep", argument: chain(1) });
-    await sleep(10);
+    await waitFor(() => out.length >= 3, "the three replies");
     assert.deepStrictEqual(
       out.map((c) => [c.parentId, Call_Kind[c.kind]]),
       [

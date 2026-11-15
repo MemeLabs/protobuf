@@ -27,6 +27,22 @@ const {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// Resolves once cond() holds, checking after each timer turn; fails after ms.
+// Tests wait for what they expect, not for a fixed time, so a slow or loaded
+// machine only makes them slower.
+const waitFor = async (cond: () => boolean, what: string, ms = 5000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    await sleep(1);
+    if (cond()) return;
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`);
+  }
+};
+
+// Resolves once everything queued on process.nextTick and as microtasks has
+// run, which is all the hosts' stream handling short of their timers.
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 // Loads another copy of host.ts, whose "stream" is streamModule.
 const loadHost = (streamModule: string): typeof Host => {
   // loaded first, so its own requires resolve as usual
@@ -143,9 +159,9 @@ const connect = (service?: ServiceRegistry, impl = impls[0]) => {
   return { host, w, r, out, send, sendJoined, pending };
 };
 
-// Runs fn with mocha's uncaught exception handler off, returning the uncaught
-// exceptions instead.
-const uncaught = async (fn: () => Promise<void>): Promise<unknown[]> => {
+// Runs fn with mocha's uncaught exception handler off, then waits for n
+// uncaught exceptions, and returns them.
+const uncaught = async (fn: () => void | Promise<void>, n: number): Promise<unknown[]> => {
   const caught: unknown[] = [];
   const onError = (e: unknown) => caught.push(e);
   const listeners = process.listeners("uncaughtException");
@@ -153,6 +169,7 @@ const uncaught = async (fn: () => Promise<void>): Promise<unknown[]> => {
   process.on("uncaughtException", onError);
   try {
     await fn();
+    await waitFor(() => caught.length >= n, `${n} uncaught exceptions`);
   } finally {
     process.removeAllListeners("uncaughtException");
     for (const l of listeners) process.on("uncaughtException", l);
@@ -227,7 +244,7 @@ describe("Host", function () {
       host["handleData"](f.subarray(0, 65536));
       assert.strictEqual(seen.length, 0);
       host["handleData"](f.subarray(65536));
-      await sleep(5);
+      await waitFor(() => out.length > 0, "the reply");
       assert.strictEqual(seen.length, 1);
       assert.deepStrictEqual(seen[0], big(100000));
       assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT"]);
@@ -247,7 +264,7 @@ describe("Host", function () {
         host["handleData"](buf.subarray(pos, (pos += n)));
       }
       host["handleData"](buf.subarray(pos));
-      await sleep(5);
+      await waitFor(() => out.length >= 2, "both replies");
       assert.deepStrictEqual(seen, [big(100000), big(99990)]);
       assert.deepStrictEqual(
         out.map((c) => [c.parentId, Call_Kind[c.kind]]),
@@ -267,7 +284,7 @@ describe("Host", function () {
           host["handleData"](f.subarray(i, i + 1));
         }
       }
-      await sleep(5);
+      await waitFor(() => out.length >= 3, "the three replies");
       assert.deepStrictEqual(seen, [big(200), big(400), big(600)]);
       assert.strictEqual(out.length, 3);
     });
@@ -283,7 +300,7 @@ describe("Host", function () {
         pos += f.length;
       }
       host["handleData"](buf);
-      await sleep(5);
+      await waitFor(() => out.length >= 3, "the three replies");
       assert.deepStrictEqual(seen, [big(1), big(2), big(3)]);
       assert.deepStrictEqual(
         out.map((c) => c.parentId),
@@ -293,13 +310,13 @@ describe("Host", function () {
 
     it("takes ArrayBuffer and offset Uint8Array chunks", async function () {
       const { service, seen } = echoService();
-      const { host } = connect(service);
+      const { host, out } = connect(service);
       const f = frame(request(1, "echo", big(10)));
       const padded = new Uint8Array(f.length + 8);
       padded.set(f, 4);
       host["handleData"](padded.subarray(4, 10));
       host["handleData"](padded.slice(10, 4 + f.length).buffer);
-      await sleep(5);
+      await waitFor(() => out.length > 0, "the reply");
       assert.deepStrictEqual(seen, [big(10)]);
     });
 
@@ -312,7 +329,7 @@ describe("Host", function () {
       buf.set(junk);
       buf.set(good, junk.length);
       assert.doesNotThrow(() => host["handleData"](buf));
-      await sleep(5);
+      await waitFor(() => out.length > 0, "the reply");
       assert.deepStrictEqual(seen, [big(5)]);
       assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT"]);
       assert.strictEqual(out.length, 1);
@@ -331,7 +348,7 @@ describe("Host", function () {
       stream.on("data", () => {
         throw new Error("listener bug");
       });
-      await sleep(5);
+      await turn();
 
       const caught = await uncaught(async () => {
         const both = new Uint8Array([
@@ -340,8 +357,7 @@ describe("Host", function () {
         ]);
         assert.doesNotThrow(() => host["handleData"](both));
         assert.deepStrictEqual(await unary, new RPCCallUnaryResponse({ id: BigInt(2) }));
-        await sleep(5);
-      });
+      }, 1);
       assert.deepStrictEqual(caught.map(String), ["Error: listener bug"]);
     });
 
@@ -383,7 +399,7 @@ describe("Host", function () {
         Promise.reject(Object.assign(new Error("boom"), { code: 4000 }))
       );
       send(request(1, "m", new RPCCallUnaryRequest()));
-      await sleep(10);
+      await waitFor(() => out.length > 0, "the reply");
       assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_ERROR"]);
       assert.deepStrictEqual(error(out), new RPCError({ message: "boom", code: 4000 }));
       assertNoProcessErrors();
@@ -394,14 +410,14 @@ describe("Host", function () {
         throw Object.assign(new Error("bang"), { code: 7 });
       });
       send(request(1, "m", new RPCCallUnaryRequest()));
-      await sleep(5);
+      await waitFor(() => out.length > 0, "the reply");
       assert.deepStrictEqual(error(out), new RPCError({ message: "bang", code: 7 }));
     });
 
     it("answers an async handler that resolves undefined with UNDEFINED", async function () {
       const { out, send, pending } = serve(() => Promise.resolve(undefined));
       send(request(1, "m", new RPCCallUnaryRequest()));
-      await sleep(10);
+      await waitFor(() => out.length > 0, "the reply");
       assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_UNDEFINED"]);
       assert.strictEqual(pending(), 0);
       assertNoProcessErrors();
@@ -419,7 +435,7 @@ describe("Host", function () {
         request(1, "m", new RPCCallUnaryRequest({ id: BigInt(9) })),
         request(2, "m", new RPCCallUnaryRequest())
       );
-      await sleep(10);
+      await waitFor(() => out.length >= 2, "both replies");
       assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT"]);
       assert.deepStrictEqual(RPCCallUnaryResponse.decode(out[0].argument).id, BigInt(9));
       assert.deepStrictEqual(responses(out, 2), ["CALL_KIND_ERROR"]);
@@ -433,7 +449,7 @@ describe("Host", function () {
       it(`answers a ${name} result that won't encode with ERROR`, async function () {
         const { out, send } = serve(result);
         send(request(1, "m", new RPCCallUnaryRequest()));
-        await sleep(10);
+        await waitFor(() => out.length > 0, "the reply");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_ERROR"]);
         assert.match(error(out).message, /encode/);
         assertNoProcessErrors();
@@ -446,7 +462,7 @@ describe("Host", function () {
         request(1, "nope", new RPCCallUnaryRequest()),
         request(2, "toString", new RPCCallUnaryRequest())
       );
-      await sleep(5);
+      await waitFor(() => out.length >= 2, "both replies");
       assert.deepStrictEqual(
         out.map((c) => [c.parentId, RPCError.decode(c.argument).message]),
         [
@@ -459,7 +475,7 @@ describe("Host", function () {
     it("answers a request whose argument doesn't decode with ERROR", async function () {
       const { out, send } = serve(() => new RPCCallUnaryResponse());
       send({ id: BigInt(1), method: "m", argument: new Uint8Array([0x08]) });
-      await sleep(5);
+      await waitFor(() => out.length > 0, "the reply");
       assert.match(error(out).message, /index out of range/);
     });
   });
@@ -489,11 +505,11 @@ describe("Host", function () {
           () => new impl.PassThrough({ objectMode: true })
         );
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => streams.length === 1, "the handler");
         streams[0].write(item(1));
         streams[0].write(item(2));
         streams[0].end();
-        await sleep(10);
+        await waitFor(() => responses(out, 1).includes("CALL_KIND_CLOSE"), "the CLOSE");
         assert.deepStrictEqual(responses(out, 1), [
           "CALL_KIND_DEFAULT",
           "CALL_KIND_DEFAULT",
@@ -508,10 +524,10 @@ describe("Host", function () {
         );
         const closed: string[] = [];
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => streams.length === 1, "the handler");
         streams[0].on("close", () => closed.push("close"));
         streams[0].end(item(1));
-        await sleep(10);
+        await waitFor(() => responses(out, 1).includes("CALL_KIND_CLOSE"), "the CLOSE");
         assert.deepStrictEqual(closed, []);
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT", "CALL_KIND_CLOSE"]);
       });
@@ -521,10 +537,10 @@ describe("Host", function () {
           () => new impl.PassThrough({ objectMode: true })
         );
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => streams.length === 1, "the handler");
         streams[0].write(item(1));
         streams[0].destroy();
-        await sleep(10);
+        await waitFor(() => responses(out, 1).includes("CALL_KIND_CLOSE"), "the CLOSE");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT", "CALL_KIND_CLOSE"]);
       });
 
@@ -533,10 +549,10 @@ describe("Host", function () {
           () => new impl.PassThrough({ objectMode: true })
         );
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => streams.length === 1, "the handler");
         streams[0].write(item(1));
         streams[0].destroy(Object.assign(new Error("disk on fire"), { code: 12 }));
-        await sleep(10);
+        await waitFor(() => responses(out, 1).includes("CALL_KIND_ERROR"), "the ERROR");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT", "CALL_KIND_ERROR"]);
         assert.deepStrictEqual(
           RPCError.decode(out[1].argument),
@@ -551,11 +567,11 @@ describe("Host", function () {
           () => new impl.PassThrough({ objectMode: true })
         );
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => streams.length === 1, "the handler");
         streams[0].write(item(1));
         streams[0].write({ id: BigInt(2) });
         streams[0].write(item(3));
-        await sleep(10);
+        await waitFor(() => responses(out, 1).includes("CALL_KIND_ERROR"), "the ERROR");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT", "CALL_KIND_ERROR"]);
         assert.ok(streams[0].destroyed);
       });
@@ -563,22 +579,26 @@ describe("Host", function () {
       for (const kind of [CANCEL, DEFAULT]) {
         it(`stops on a CANCEL of ${Call_Kind[kind]}`, async function () {
           let iid: ReturnType<typeof setInterval>;
+          let closed = false;
           const { out, send, streams, pending } = serveStream(() => {
             const s = new impl.PassThrough({ objectMode: true });
             let n = 0;
             iid = setInterval(() => s.write(item(++n)), 2);
-            s.on("close", () => clearInterval(iid));
+            s.on("close", () => {
+              closed = true;
+              clearInterval(iid);
+            });
             return s;
           });
           try {
             send(request(1, "s", new RPCCallStreamRequest()));
-            await sleep(20);
+            await waitFor(() => responses(out, 1).length > 0, "the stream's items");
             send(cancel(1, kind));
-            await sleep(5);
+            await waitFor(() => closed, "the stream to close");
             const sent = out.length;
             assert.ok(sent > 0);
-            await sleep(30);
             assert.ok(streams[0].destroyed);
+            await turn();
             assert.strictEqual(out.length, sent);
             assert.ok(!responses(out, 1).includes("CALL_KIND_CLOSE"));
             assert.strictEqual(pending(), 0);
@@ -590,16 +610,22 @@ describe("Host", function () {
 
       it("drops a cancelled unary call's late result", async function () {
         const service = new ServiceRegistry();
+        let finish: () => void;
         service.registerMethod(
           "slow",
-          () => sleep(20).then(() => new RPCCallUnaryResponse()),
+          () =>
+            new Promise<RPCCallUnaryResponse>((resolve) => {
+              finish = () => resolve(new RPCCallUnaryResponse());
+            }),
           RPCCallUnaryRequest
         );
         const { out, send, pending } = connect(service, impl);
         send(request(1, "slow", new RPCCallUnaryRequest()));
-        await sleep(5);
+        await waitFor(() => finish !== undefined, "the handler");
         send(cancel(1, DEFAULT));
-        await sleep(40);
+        await waitFor(() => pending() === 0, "the cancel");
+        finish();
+        await turn();
         assert.deepStrictEqual(out, []);
         assert.strictEqual(pending(), 0);
       });
@@ -607,8 +633,13 @@ describe("Host", function () {
       it("ignores a CANCEL or CALLBACK for a call it doesn't know", async function () {
         const { out, send } = serveStream(() => new impl.PassThrough({ objectMode: true }));
         send(cancel(5, CANCEL), cancel(5, DEFAULT), callback(BigInt(5), DEFAULT));
-        await sleep(5);
-        assert.deepStrictEqual(out, []);
+        // answered once the frames before it are handled
+        send(request(9, "nope", new RPCCallUnaryRequest()));
+        await waitFor(() => responses(out, 9).length > 0, "the reply to 9");
+        assert.deepStrictEqual(
+          out.filter((c) => c.parentId !== BigInt(9)),
+          []
+        );
         assertNoProcessErrors();
       });
 
@@ -625,9 +656,13 @@ describe("Host", function () {
             },
             RPCCallStreamRequest
           );
+          let finish: () => void;
           service.registerMethod(
             "slow",
-            () => sleep(20).then(() => new RPCCallUnaryResponse()),
+            () =>
+              new Promise<RPCCallUnaryResponse>((resolve) => {
+                finish = () => resolve(new RPCCallUnaryResponse());
+              }),
             RPCCallUnaryRequest
           );
           const { r, out, send, pending } = connect(service, impl);
@@ -635,14 +670,17 @@ describe("Host", function () {
             request(1, "s", new RPCCallStreamRequest()),
             request(2, "slow", new RPCCallUnaryRequest())
           );
-          await sleep(5);
+          await waitFor(() => streams.length === 1 && finish !== undefined, "both handlers");
           streams[0].write(item(1));
-          await sleep(5);
+          await waitFor(() => responses(out, 1).length > 0, "the item");
           r.on("error", () => undefined);
           if (how === "end") r.end();
           else if (how === "close") r.destroy();
           else r.destroy(new Error("reset"));
-          await sleep(30);
+          await waitFor(() => streams[0].destroyed, "the stream to be destroyed");
+          // the slow call's result, after the connection closed
+          finish();
+          await turn();
           assert.ok(streams[0].destroyed);
           assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_DEFAULT"]);
           assert.deepStrictEqual(responses(out, 2), []);
@@ -658,23 +696,32 @@ describe("Host", function () {
         return { ...connect(service, impl), streams };
       };
 
-      // a stream, made after a wait, that sends items until it's destroyed
-      const ticker = async (streams: PassThrough[]) => {
-        await sleep(20);
-        const s = new impl.PassThrough({ objectMode: true });
-        streams.push(s);
-        let n = 0;
-        const iid = setInterval(() => s.write(item(++n)), 2);
-        s.on("close", () => clearInterval(iid));
-        return s;
+      // a handler whose stream, made once release() is called, sends items
+      // until it's destroyed
+      const ticker = () => {
+        let release: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        const handler = async (streams: PassThrough[]) => {
+          await released;
+          const s = new impl.PassThrough({ objectMode: true });
+          streams.push(s);
+          let n = 0;
+          const iid = setInterval(() => s.write(item(++n)), 2);
+          s.on("close", () => clearInterval(iid));
+          return s;
+        };
+        return { handler, release: () => release() };
       };
 
       it("destroys a stream its handler's promise gives after a CANCEL", async function () {
-        const { out, send, streams, pending } = serveAsync(ticker);
+        const { handler, release } = ticker();
+        const { out, send, streams, pending } = serveAsync(handler);
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => pending() === 1, "the call to be served");
         send(cancel(1, CANCEL));
-        await sleep(30);
+        await waitFor(() => pending() === 0, "the cancel");
+        release();
+        await waitFor(() => streams.length === 1 && streams[0].destroyed, "the stream's destroy");
         assert.strictEqual(streams.length, 1);
         assert.ok(streams[0].destroyed);
         assert.deepStrictEqual(out, []);
@@ -682,11 +729,14 @@ describe("Host", function () {
       });
 
       it("destroys a stream its handler's promise gives after the connection closes", async function () {
-        const { r, out, send, streams, pending } = serveAsync(ticker);
+        const { handler, release } = ticker();
+        const { host, r, out, send, streams, pending } = serveAsync(handler);
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(5);
+        await waitFor(() => pending() === 1, "the call to be served");
         r.end();
-        await sleep(30);
+        await waitFor(() => host["closed"], "the host to close");
+        release();
+        await waitFor(() => streams.length === 1 && streams[0].destroyed, "the stream's destroy");
         assert.strictEqual(streams.length, 1);
         assert.ok(streams[0].destroyed);
         assert.deepStrictEqual(out, []);
@@ -696,12 +746,13 @@ describe("Host", function () {
       it("sends one CLOSE for a stream destroyed before its handler returned it", async function () {
         const { out, send, pending } = serveAsync(async () => {
           const s = new impl.PassThrough({ objectMode: true });
+          const closed = new Promise((resolve) => s.once("close", resolve));
           s.destroy();
-          await sleep(5);
+          await closed;
           return s;
         });
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(20);
+        await waitFor(() => responses(out, 1).length > 0, "the reply");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_CLOSE"]);
         assert.strictEqual(pending(), 0);
       });
@@ -709,13 +760,14 @@ describe("Host", function () {
       it("sends one CLOSE for a stream that ended before its handler returned it", async function () {
         const { out, send, pending } = serveAsync(async () => {
           const s = new impl.PassThrough({ objectMode: true, autoDestroy: false });
+          const ended = new Promise((resolve) => s.once("end", resolve));
           s.resume();
           s.end();
-          await sleep(5);
+          await ended;
           return s;
         });
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(20);
+        await waitFor(() => responses(out, 1).length > 0, "the reply");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_CLOSE"]);
         assert.strictEqual(pending(), 0);
       });
@@ -727,7 +779,7 @@ describe("Host", function () {
           return s;
         });
         send(request(1, "s", new RPCCallStreamRequest()));
-        await sleep(20);
+        await waitFor(() => responses(out, 1).length > 0, "the reply");
         assert.deepStrictEqual(responses(out, 1), ["CALL_KIND_ERROR"]);
         assert.deepStrictEqual(
           RPCError.decode(out[0].argument),
@@ -793,11 +845,12 @@ describe("Host", function () {
       );
       assert.deepStrictEqual(reason, { e: undefined });
       assert.strictEqual(pending(), 0);
-      await sleep(5);
+      await waitFor(() => cancels(out).length > 0, "the cancel");
       assert.deepStrictEqual(cancels(out), [[BigInt(1), "CALL_KIND_CANCEL"]]);
-      // a late response is dropped
+      // a late response is dropped; the reply to 9 comes once it's handled
       send(callback(BigInt(1), DEFAULT, new RPCCallUnaryResponse()));
-      await sleep(5);
+      send(request(9, "nope", new RPCCallUnaryRequest()));
+      await waitFor(() => responses(out, 9).length > 0, "the reply to 9");
       assertNoProcessErrors();
     });
 
@@ -854,7 +907,7 @@ describe("Host", function () {
       const [ab, ba] = [new PassThrough(), new PassThrough()];
       const a = new Host(ab, ba);
       new Host(ba, ab, service);
-      await sleep(5);
+      await turn();
       // from a macrotask, as an event handler would
       const res = await new Promise((resolve) =>
         setTimeout(() => {
@@ -876,11 +929,13 @@ describe("Host", function () {
     it("writes nothing once the connection has closed", async function () {
       const { host, r, out } = connect();
       r.end();
-      await sleep(5);
+      await waitFor(() => host["closed"], "the host to close");
       await assert.rejects(unary(host), new Error("rpc: connection closed"));
       const s = host.expectMany(host.call("s", new RPCCallStreamRequest()), RPCCallStreamResponse);
-      s.on("error", () => undefined);
-      await sleep(5);
+      assert.deepStrictEqual(
+        await new Promise((resolve) => s.on("error", resolve)),
+        new Error("rpc: connection closed")
+      );
       assert.deepStrictEqual(out, []);
     });
 
@@ -896,19 +951,21 @@ describe("Host", function () {
       } as unknown as Writable;
       const r = new PassThrough();
       new Host(w, r, service);
-      const caught = await uncaught(async () => {
+      const caught = await uncaught(() => {
         r.write(frame(request(1, "m", new RPCCallUnaryRequest())));
-        await sleep(10);
-      });
+      }, 1);
       assert.strictEqual(writes, 1);
       assert.deepStrictEqual(caught.map(String), ["Error: EPIPE"]);
     });
 
     it("doesn't take a CANCEL of the peer's call for one of its own", async function () {
       // the peer cancels its call 1, as a Go client does: CALL_KIND_DEFAULT
-      const { host, send } = connect();
+      const { host, out, send } = connect();
       const p = unary(host);
       send(cancel(1, DEFAULT), cancel(1, CANCEL));
+      // answered once the cancels are handled
+      send(request(9, "nope", new RPCCallUnaryRequest()));
+      await waitFor(() => responses(out, 9).length > 0, "the reply to 9");
       assert.strictEqual(await state(p), "pending");
       send(callback(BigInt(1), DEFAULT, new RPCCallUnaryResponse({ id: BigInt(3) })));
       assert.deepStrictEqual(await p, new RPCCallUnaryResponse({ id: BigInt(3) }));
@@ -943,12 +1000,14 @@ describe("Host", function () {
         send(callback(BigInt(1), DEFAULT, item(1)));
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         for await (const _ of s) break;
-        await sleep(5);
+        await waitFor(() => cancels(out).length > 0, "the cancel");
         assert.deepStrictEqual(cancels(out), [[BigInt(1), "CALL_KIND_CANCEL"]]);
         assert.strictEqual(pending(), 0);
-        // the server's items in flight are dropped
+        // the server's items in flight are dropped; the reply to 9 comes once
+        // they're handled
         send(callback(BigInt(1), DEFAULT, item(2)));
-        await sleep(5);
+        send(request(9, "nope", new RPCCallUnaryRequest()));
+        await waitFor(() => responses(out, 9).length > 0, "the reply to 9");
         assert.strictEqual(cancels(out).length, 1);
       });
 
@@ -962,7 +1021,7 @@ describe("Host", function () {
         const e = await errored;
         assert.ok(e instanceof RPCError);
         assert.strictEqual(e.code, 9);
-        await sleep(5);
+        await waitFor(() => events.length > 0, "the close");
         assert.deepStrictEqual(events, ["close"]);
         assert.deepStrictEqual(cancels(out), []);
         assert.strictEqual(pending(), 0);
@@ -972,12 +1031,13 @@ describe("Host", function () {
         const { host, out, send, pending } = connect(undefined, impl);
         const s = stream(host);
         const errored = new Promise<unknown>((resolve) => s.on("error", resolve));
+        const closed = new Promise<void>((resolve) => s.on("close", resolve));
         send(callback(BigInt(1), UNDEFINED));
         assert.deepStrictEqual(
           await errored,
           new Error("rpc: unexpected response kind CALL_KIND_UNDEFINED")
         );
-        await sleep(5);
+        await closed;
         assert.deepStrictEqual(cancels(out), []);
         assert.strictEqual(pending(), 0);
       });
@@ -988,7 +1048,7 @@ describe("Host", function () {
         const errored = new Promise<Error>((resolve) => s.on("error", resolve));
         send({ ...callback(BigInt(1), DEFAULT), argument: new Uint8Array([0x08]) });
         assert.match((await errored).message, /index out of range/);
-        await sleep(5);
+        await waitFor(() => cancels(out).length > 0, "the cancel");
         assert.deepStrictEqual(cancels(out), [[BigInt(1), "CALL_KIND_CANCEL"]]);
         assert.strictEqual(pending(), 0);
       });
@@ -1002,7 +1062,8 @@ describe("Host", function () {
             RPCCallStreamResponse
           );
           const errored = new Promise<unknown>((resolve) => s.on("error", resolve));
-          await sleep(5);
+          const closed = new Promise<void>((resolve) => s.on("close", resolve));
+          await turn();
           r.on("error", () => undefined);
           if (how === "end") r.end();
           else if (how === "close") r.destroy();
@@ -1018,11 +1079,12 @@ describe("Host", function () {
             host.call("s", new RPCCallStreamRequest()),
             RPCCallStreamResponse
           );
+          const laterClosed = new Promise<void>((resolve) => later.on("close", resolve));
           assert.deepStrictEqual(
             await new Promise((resolve) => later.on("error", resolve)),
             new Error("rpc: connection closed")
           );
-          await sleep(5);
+          await Promise.all([closed, laterClosed]);
           assert.deepStrictEqual(cancels(out), []);
           assert.strictEqual(pending(), 0);
         });
@@ -1080,9 +1142,9 @@ describe("Host", function () {
         const { host, r, send, pending } = connect(undefined, impl);
         const s = stream(host);
         send(callback(BigInt(1), DEFAULT, item(1)), callback(BigInt(1), DEFAULT, item(2)));
-        await sleep(5);
+        await turn();
         r.end();
-        await sleep(5);
+        await waitFor(() => host["closed"], "the host to close");
         const { items, err } = await readAll(s);
         assert.deepStrictEqual(items, [item(1), item(2)]);
         assert.deepStrictEqual(err, new Error("rpc: connection closed"));
@@ -1105,12 +1167,12 @@ describe("Host", function () {
         const s = stream(host);
         const items: RPCCallStreamResponse[] = [];
         send(...[1, 2, 3].map((i) => callback(BigInt(1), DEFAULT, item(i))));
-        await sleep(5);
+        await turn();
         s.on("data", (v) => {
           items.push(v);
           s.destroy();
         });
-        await sleep(10);
+        await waitFor(() => cancels(out).length > 0, "the cancel");
         assert.deepStrictEqual(items, [item(1)]);
         assert.deepStrictEqual(cancels(out), [[BigInt(1), "CALL_KIND_CANCEL"]]);
         assert.strictEqual(pending(), 0);
@@ -1193,7 +1255,10 @@ describe("Host", function () {
       let n = 0;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _ of endless) if (++n === 3) break;
-      await sleep(10);
+      await waitFor(
+        () => bStreams[1].destroyed && b["served"].size === 0,
+        "b to stop serving the stream"
+      );
       assert.ok(bStreams[1].destroyed);
       assert.strictEqual(a["callbacks"].size + a["served"].size, 0);
       assert.strictEqual(b["callbacks"].size + b["served"].size, 0);

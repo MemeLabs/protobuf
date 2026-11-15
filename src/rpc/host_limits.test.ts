@@ -227,6 +227,18 @@ const waitFor = async (cond: () => boolean, what: string, ms = 5000) => {
   }
 };
 
+// Resolves once everything queued on process.nextTick and as microtasks has
+// run, which is all of a host's stream handling short of its timers.
+const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+// Sends a request for a method no service has and waits for its reply, which
+// comes once the frames sent before it are handled. Not for a closed host or
+// a full w, which answer nothing.
+const barrier = async (c: { out: Call[]; send: (...calls: ICall[]) => void }, id = 999) => {
+  c.send(request(id, "barrier"));
+  await waitFor(() => responses(c.out, id).length > 0, `the reply to ${id}`);
+};
+
 // get()'s value once it has stayed the same for ms
 const steady = async (get: () => number, ms = 50) => {
   let v = get();
@@ -243,15 +255,16 @@ const steady = async (get: () => number, ms = 50) => {
   return v;
 };
 
-// Runs fn with mocha's uncaught exception handler off, returning the uncaught
-// exceptions instead.
-const uncaught = async (fn: () => Promise<void>): Promise<unknown[]> => {
+// Runs fn with mocha's uncaught exception handler off, then waits for n
+// uncaught exceptions, and returns them.
+const uncaught = async (fn: () => void | Promise<void>, n: number): Promise<unknown[]> => {
   const caught: unknown[] = [];
   const listeners = process.listeners("uncaughtException");
   process.removeAllListeners("uncaughtException");
   process.on("uncaughtException", (e: unknown) => caught.push(e));
   try {
     await fn();
+    await waitFor(() => caught.length >= n, `${n} uncaught exceptions`);
   } finally {
     process.removeAllListeners("uncaughtException");
     for (const l of listeners) process.on("uncaughtException", l);
@@ -265,12 +278,15 @@ const blocked = (host: Host) => (host as unknown as { blocked: boolean }).blocke
 // written plus extra.
 const fakeW = (hidden = false) => {
   let written = 0;
+  let writes = 0;
   const f = {
     extra: 0,
     written: () => written,
+    writes: () => writes,
     w: {
       write: (b: Uint8Array) => {
         written += b.byteLength;
+        writes++;
         return true;
       },
       once: () => f.w,
@@ -386,7 +402,7 @@ for (const impl of impls) {
           const p = unary(host);
           const s = testStream(host);
           const errored = errorOf(s);
-          await sleep(5);
+          await waitFor(() => out.length === 3, "the calls to be written");
           const written = out.length;
           // the prefix alone, without the frame
           r.write(
@@ -400,8 +416,9 @@ for (const impl of impls) {
           assert.deepStrictEqual(closes, [new Error("rpc: message too large")]);
           assert.strictEqual(callbacks(), 0);
           await assert.rejects(unary(host), new Error("rpc: connection closed"));
-          send(callback(1, DEFAULT, item(1)));
-          await sleep(5);
+          // the closed host takes nothing from r, and answers nothing
+          send(callback(1, DEFAULT, item(1)), request(9, "sync"));
+          await turn();
           assert.strictEqual(out.length, written);
           assert.strictEqual(closes.length, 1);
         });
@@ -431,7 +448,7 @@ for (const impl of impls) {
         const { host, sendRaw } = connect(impl);
         const s = testStream(host);
         sendRaw(frame(callback(1, DEFAULT, item(7))), frame(sized(99, 100 * KiB)));
-        await sleep(5);
+        await turn();
         const v = (await s[Symbol.asyncIterator]().next()).value as TestMessage;
         assert.deepStrictEqual(Array.from(v.bytesValue), [7]);
         assert.ok(v.bytesValue.buffer.byteLength < 100, `${v.bytesValue.buffer.byteLength}`);
@@ -442,7 +459,7 @@ for (const impl of impls) {
         const { host, sendRaw } = connect(impl);
         const s = testStream(host);
         sendRaw(frame(sized(99, 100 * KiB)), frame(callback(1, DEFAULT, item(7))));
-        await sleep(5);
+        await turn();
         const v = (await s[Symbol.asyncIterator]().next()).value as TestMessage;
         assert.deepStrictEqual(Array.from(v.bytesValue), [7]);
         assert.ok(v.bytesValue.buffer.byteLength < 100, `${v.bytesValue.buffer.byteLength}`);
@@ -496,9 +513,9 @@ for (const impl of impls) {
       it("is called once, without an error, when r ends", async function () {
         const { r, closes } = connect(impl);
         r.end();
-        await sleep(5);
+        await waitFor(() => closes.length > 0, "onClose");
         r.destroy();
-        await sleep(5);
+        await turn();
         assert.deepStrictEqual(closes, [undefined]);
       });
 
@@ -508,7 +525,7 @@ for (const impl of impls) {
         r.on("error", () => undefined);
         r.destroy(new Error("reset"));
         await assert.rejects(p, new Error("rpc: connection closed"));
-        await sleep(5);
+        await waitFor(() => closes.length > 0, "onClose");
         assert.deepStrictEqual(closes, [new Error("reset")]);
       });
 
@@ -521,7 +538,7 @@ for (const impl of impls) {
         });
         const p = unary(host).catch((e: unknown) => e);
         let threw: unknown;
-        const caught = await uncaught(async () => {
+        const caught = await uncaught(() => {
           try {
             r.write(
               new Writer()
@@ -532,8 +549,7 @@ for (const impl of impls) {
           } catch (e) {
             threw = e;
           }
-          await sleep(10);
-        });
+        }, 1);
         assert.strictEqual(threw, undefined);
         assert.deepStrictEqual(caught.map(String), ["Error: boom"]);
         assert.deepStrictEqual(await p, new Error("rpc: message too large"));
@@ -558,14 +574,14 @@ for (const impl of impls) {
         const other = host.expectMany(host.call("s", new TestMessage()), TestMessage);
         const p = unary(host);
         send(itemCall(1), itemCall(2), itemCall(3));
-        await sleep(5);
+        await barrier({ out, send });
         assert.deepStrictEqual(cancels(out), []);
         send(itemCall(4));
         const { items, err } = await readAll<TestMessage>(s);
         assert.deepStrictEqual(items, []);
         assert.ok(err instanceof RPCError);
         assert.deepStrictEqual([err.message, err.code], ["rpc: stream response buffer full", 1010]);
-        await sleep(5);
+        await waitFor(() => cancels(out).length > 0, "the cancel");
         assert.deepStrictEqual(cancels(out), [[1, "CALL_KIND_CANCEL"]]);
 
         send({ ...callback(2, DEFAULT, item(5)) }, callback(2, Call_Kind.CALL_KIND_CLOSE));
@@ -585,7 +601,7 @@ for (const impl of impls) {
           const { host, out, send } = connect(impl, { options: { maxStreamBufferBytes: max } });
           const s = quiet(testStream(host));
           send(itemCall(1, 2), itemCall(2, 2));
-          await sleep(5);
+          await barrier({ out, send });
           assert.strictEqual(s.destroyed, fails);
           assert.strictEqual(cancels(out).length, fails ? 1 : 0);
           s.destroy();
@@ -607,10 +623,10 @@ for (const impl of impls) {
         const s = testStream(host);
         const iter = s[Symbol.asyncIterator]();
         send(itemCall(1), itemCall(2), itemCall(3));
-        await sleep(5);
+        await barrier({ out, send });
         assert.deepStrictEqual(bytesOf([(await iter.next()).value]), [[1]]);
         send(itemCall(4), callback(1, Call_Kind.CALL_KIND_CLOSE));
-        await sleep(5);
+        await barrier({ out, send }, 998);
         assert.deepStrictEqual(cancels(out), []);
         const rest: unknown[] = [];
         for (let r = await iter.next(); !r.done; r = await iter.next()) rest.push(r.value);
@@ -624,10 +640,10 @@ for (const impl of impls) {
           const { host, out, send } = connect(impl, { options });
           const s = quiet(testStream(host));
           for (let i = 0; i < n; i++) send(res);
-          await sleep(10);
+          await barrier({ out, send });
           assert.strictEqual(s.destroyed, false);
           send(res);
-          await sleep(10);
+          await waitFor(() => s.destroyed, "the stream to fail");
           assert.strictEqual(s.destroyed, true);
           assert.deepStrictEqual(cancels(out), [[1, "CALL_KIND_CANCEL"]]);
         });
@@ -646,10 +662,10 @@ for (const impl of impls) {
             return TestMessage.decode(b);
           },
         } as unknown as MessageClass<TestMessage>;
-        const { host, send } = connect(impl);
+        const { host, out, send } = connect(impl);
         const s = host.expectMany(host.call("s", new TestMessage()), Counting);
         for (let i = 1; i <= 10; i++) send(itemCall(i));
-        await sleep(5);
+        await barrier({ out, send });
         assert.strictEqual(decoded, 1);
         const iter = s[Symbol.asyncIterator]();
         assert.deepStrictEqual(bytesOf([(await iter.next()).value]), [[1]]);
@@ -663,13 +679,13 @@ for (const impl of impls) {
         const { host, out, send } = connect(impl);
         const s = testStream(host);
         send(itemCall(1), itemCall(2), bad(), itemCall(4));
-        await sleep(5);
+        await barrier({ out, send });
         assert.strictEqual(s.destroyed, false);
         assert.deepStrictEqual(cancels(out), []);
         const { items, err } = await readAll<TestMessage>(s);
         assert.deepStrictEqual(bytesOf(items), [[1], [2]]);
         assert.match((err as Error).message, /index out of range/);
-        await sleep(5);
+        await waitFor(() => cancels(out).length > 0, "the cancel");
         assert.deepStrictEqual(cancels(out), [[1, "CALL_KIND_CANCEL"]]);
       });
 
@@ -680,7 +696,7 @@ for (const impl of impls) {
         const { items, err } = await readAll<TestMessage>(s);
         assert.deepStrictEqual(bytesOf(items), [[1]]);
         assert.match((err as Error).message, /index out of range/);
-        await sleep(5);
+        await barrier({ out, send });
         assert.deepStrictEqual(cancels(out), []);
       });
 
@@ -690,7 +706,8 @@ for (const impl of impls) {
         const res = sized(1, 512 * KiB - 256);
         for (let i = 0; i < 40; i++) send(res);
         send(callback(1, Call_Kind.CALL_KIND_CLOSE));
-        await sleep(10);
+        // every item is queued before the first is read
+        await barrier({ out, send });
         const { items, err } = await readAll<TestMessage>(s);
         assert.strictEqual(items.length, 40);
         assert.strictEqual(err, undefined);
@@ -705,7 +722,7 @@ for (const impl of impls) {
         const { service, calls } = testService(impl);
         const { out, send } = connect(impl, { service, options: { maxConcurrentCalls: 2 } });
         send(request(1, "hold"), request(2, "hold"), request(3, "hold"));
-        await sleep(5);
+        await waitFor(() => responses(out, 3).length > 0, "the reply to 3");
         assert.deepStrictEqual(calls, ["hold", "hold"]);
         assert.deepStrictEqual(responses(out, 3), [tooMany]);
         assert.deepStrictEqual(responses(out, 1), []);
@@ -715,7 +732,7 @@ for (const impl of impls) {
         const { service, calls } = testService(impl);
         const { out, send } = connect(impl, { service, options: { maxConcurrentCalls: 1 } });
         send(request(1, "sync"), request(2, "sync"), request(3, "sync"));
-        await sleep(5);
+        await waitFor(() => responses(out, 3).length > 0, "the reply to 3");
         assert.deepStrictEqual(calls, ["sync", "sync", "sync"]);
         assert.deepStrictEqual(responses(out, 3), [["CALL_KIND_DEFAULT"]]);
       });
@@ -738,23 +755,23 @@ for (const impl of impls) {
           const t = testService(impl);
           const c = connect(impl, { service: t.service, options: { maxConcurrentCalls: 1 } });
           c.send(request(1, method), request(2, "sync"));
-          await sleep(5);
+          await waitFor(() => responses(c.out, 2).length > 0, "the reply to 2");
           assert.deepStrictEqual(responses(c.out, 2), [tooMany]);
           finish(t, c);
-          await sleep(5);
+          await waitFor(() => c.serving() === 0, "the slot to be freed");
           assert.strictEqual(c.serving(), 0);
           c.send(request(3, "sync"));
-          await sleep(5);
+          await waitFor(() => responses(c.out, 3).length > 0, "the reply to 3");
           assert.deepStrictEqual(responses(c.out, 3), [["CALL_KIND_DEFAULT"]]);
           assert.deepStrictEqual(t.calls, [method, "sync"]);
         });
       }
 
       it("takes responses to its own calls while full", async function () {
-        const { service } = testService(impl);
+        const { service, calls } = testService(impl);
         const { host, out, send } = connect(impl, { service, options: { maxConcurrentCalls: 1 } });
         send(request(1, "hold"));
-        await sleep(5);
+        await waitFor(() => calls.length === 1, "the call to hold");
         const p = unary(host);
         send(callback(1, DEFAULT, new RPCCallUnaryResponse({ id: BigInt(9) })));
         assert.strictEqual((await p).id, BigInt(9));
@@ -768,11 +785,14 @@ for (const impl of impls) {
           options: { maxConcurrentCalls: 2 },
         });
         send(request(1, "stream"), request(1, "stream"), request(2, "sync"));
-        await sleep(5);
+        await waitFor(() => responses(out, 2).length > 0, "the reply to 2");
         assert.deepStrictEqual(t.calls, ["stream", "stream"]);
         assert.deepStrictEqual(responses(out, 2), [tooMany]);
         r.end();
-        await sleep(5);
+        await waitFor(
+          () => t.streams.every((s) => s.destroyed) && serving() === 0,
+          "the streams to be cancelled"
+        );
         assert.deepStrictEqual(
           t.streams.map((s) => s.destroyed),
           [true, true]
@@ -787,7 +807,7 @@ for (const impl of impls) {
           const reqs: Uint8Array[] = [];
           for (let i = 1; i <= max + 1; i++) reqs.push(frame(request(i, "hold")));
           sendRaw(...reqs);
-          await sleep(10);
+          await waitFor(() => responses(out, max + 1).length > 0, `the reply to ${max + 1}`);
           assert.strictEqual(t.calls.length, max);
           assert.deepStrictEqual(responses(out, max), []);
           assert.deepStrictEqual(responses(out, max + 1), [tooMany]);
@@ -806,7 +826,8 @@ for (const impl of impls) {
         const reqs: Uint8Array[] = [];
         for (let i = 1; i <= 1100; i++) reqs.push(frame(request(i, "hold")));
         sendRaw(...reqs);
-        await sleep(10);
+        // past 1024 frames, the rest are dispatched from a timer
+        await waitFor(() => t.calls.length === 1100, "1100 calls");
         assert.strictEqual(t.calls.length, 1100);
         assert.deepStrictEqual(out, []);
       });
@@ -829,7 +850,10 @@ for (const impl of impls) {
             withHeaders(request(1, "headers"), ok()),
             withHeaders(request(2, "headers"), over())
           );
-          await sleep(5);
+          await waitFor(
+            () => responses(out, 1).length > 0 && responses(out, 2).length > 0,
+            "the replies to 1 and 2"
+          );
           assert.deepStrictEqual(t.seenHeaders, [ok().size]);
           assert.deepStrictEqual(responses(out, 1), [["CALL_KIND_DEFAULT"]]);
           assert.deepStrictEqual(responses(out, 2), [tooMany]);
@@ -853,7 +877,7 @@ for (const impl of impls) {
           const { items, err } = await readAll(s);
           assert.strictEqual(items.length, 1);
           assert.deepStrictEqual(err, new Error("rpc: too many headers"));
-          await sleep(5);
+          await waitFor(() => cancels(out).length > 0, "the cancel");
           assert.deepStrictEqual(cancels(out), [[3, "CALL_KIND_CANCEL"]]);
           assert.strictEqual(host["callbacks"].size, 0);
         });
@@ -907,7 +931,7 @@ for (const impl of impls) {
         const b = new Writer().uint32(8).uint64(BigInt(1)).uint32(26).string("headers");
         for (let i = 0; i < 3; i++) b.uint32(50).bytes(entry);
         sendRaw(prefixed(b.finish().slice()));
-        await sleep(5);
+        await waitFor(() => responses(out, 1).length > 0, "the reply to 1");
         assert.deepStrictEqual(t.calls, []);
         assert.deepStrictEqual(responses(out, 1), [tooMany]);
       });
@@ -921,7 +945,7 @@ for (const impl of impls) {
         const big = headers(1000);
         big.set("big", new Uint8Array(100 * KiB));
         send(withHeaders(request(1, "headers"), big));
-        await sleep(5);
+        await waitFor(() => responses(out, 1).length > 0, "the reply to 1");
         assert.deepStrictEqual(t.seenHeaders, [1001]);
         assert.deepStrictEqual(responses(out, 1), [["CALL_KIND_DEFAULT"]]);
       });
@@ -930,9 +954,9 @@ for (const impl of impls) {
         const t = testService(impl);
         const { out, send, serving } = connect(impl, { service: t.service });
         send(request(1, "stream"));
-        await sleep(5);
+        await waitFor(() => t.streams.length === 1, "the stream");
         send(withHeaders(cancel(1), headers(65)));
-        await sleep(5);
+        await waitFor(() => t.streams[0].destroyed, "the stream to be cancelled");
         assert.strictEqual(t.streams[0].destroyed, true);
         assert.strictEqual(serving(), 0);
         assert.deepStrictEqual(responses(out, 1), []);
@@ -958,7 +982,7 @@ for (const impl of impls) {
         };
         try {
           sendRaw(prefixed(big));
-          await sleep(10);
+          await waitFor(() => responses(out, 1).length > 0, "the reply to 1");
         } finally {
           Call.decode = decode;
         }
@@ -971,7 +995,7 @@ for (const impl of impls) {
         const t = testService(impl);
         const { out, sendRaw, send } = connect(impl, { service: t.service });
         send(request(1, "stream"));
-        await sleep(5);
+        await waitFor(() => t.streams.length === 1, "the stream");
         const over = (w: Writer) => {
           for (let i = 0; i < 65; i++) w.uint32(50).fork().uint32(10).string(`h${i}`).ldelim();
           return prefixed(w.finish().slice());
@@ -992,7 +1016,7 @@ for (const impl of impls) {
               .string("sync")
           )
         );
-        await sleep(5);
+        await waitFor(() => responses(out, 3).length > 0, "the reply to 3");
         assert.deepStrictEqual(responses(out, 3), [tooMany]);
         assert.deepStrictEqual(responses(out, 2), []);
         assert.strictEqual(t.streams[0].destroyed, false);
@@ -1010,7 +1034,7 @@ for (const impl of impls) {
               .string("CANCEL")
           )
         );
-        await sleep(5);
+        await waitFor(() => t.streams[0].destroyed, "the stream to be cancelled");
         assert.strictEqual(t.streams[0].destroyed, true);
         assert.deepStrictEqual(responses(out, 4), []);
       });
@@ -1107,7 +1131,7 @@ for (const impl of impls) {
           const { out, sendRaw, send } = connect(impl, { service: t.service });
           sendRaw(prefixed(b()));
           send(request(5, "sync"));
-          await sleep(5);
+          await waitFor(() => responses(out, 5).length > 0, "the reply to 5");
           assert.deepStrictEqual(t.calls, ["sync"]);
           assert.deepStrictEqual(
             out.map((c) => Number(c.parentId)),
@@ -1167,7 +1191,7 @@ for (const impl of impls) {
           { ...request(7, "sync"), argument: new Uint8Array([0x08]) }
         );
         await waitFor(() => t.calls.includes("hold"), "the call to hold");
-        await sleep(5);
+        await turn();
         assert.strictEqual(c.backlog(), backlog);
         c.send(cancel(1));
         c.read();
@@ -1192,7 +1216,7 @@ for (const impl of impls) {
         c.send(request(2, "nope"), { ...request(3, "sync"), argument: new Uint8Array([0x08]) });
         c.send(request(4, "hold"));
         await waitFor(() => t.calls.includes("hold"), "the call to hold");
-        await sleep(5);
+        await turn();
         assert.strictEqual(c.backlog(), backlog);
         c.send(cancel(1));
         c.read();
@@ -1259,17 +1283,19 @@ for (const impl of impls) {
         });
         const p = unary(host).catch((e: unknown) => e);
         f.extra = 1000 - f.written() - 2 * replyBytes;
+        const writes = f.writes();
         r.write(frame(request(1, "sync")));
         r.write(frame(request(2, "sync")));
-        await sleep(5);
+        await waitFor(() => f.writes() === writes + 2, "the replies to 1 and 2");
         assert.deepStrictEqual(closes, []);
         r.write(frame(request(3, "sync")));
-        await sleep(5);
+        await waitFor(() => closes.length > 0, "the host to close");
         assert.deepStrictEqual(closes, [new Error("rpc: peer not reading")]);
         assert.deepStrictEqual(await p, new Error("rpc: peer not reading"));
         const written = f.written();
+        // the closed host takes nothing from r
         r.write(frame(request(4, "sync")));
-        await sleep(5);
+        await turn();
         assert.strictEqual(f.written(), written);
       });
 
@@ -1299,10 +1325,10 @@ for (const impl of impls) {
           new impl.Host(f.w, r, t.service, { ...options, onClose: (err) => closes.push(err) });
           f.extra = max - f.written() - replyBytes;
           r.write(frame(request(1, "sync")));
-          await sleep(5);
+          await waitFor(() => f.writes() === 1, "the reply to 1");
           assert.deepStrictEqual(closes, []);
           r.write(frame(request(2, "sync")));
-          await sleep(5);
+          await waitFor(() => closes.length > 0, "the host to close");
           assert.deepStrictEqual(closes, [new Error("rpc: peer not reading")]);
         });
       };
@@ -1324,7 +1350,7 @@ for (const impl of impls) {
           new impl.Host(f.w, r, t.service, { ...options, onClose: (err) => closes.push(err) });
           f.extra = 1024 * MiB;
           r.write(frame(request(1, "sync")));
-          await sleep(5);
+          await waitFor(() => f.writes() === 1, "the reply to 1");
           assert.deepStrictEqual(closes, []);
           assert.ok(f.written() > 0);
         });
@@ -1571,18 +1597,19 @@ for (const impl of impls) {
           await waitFor(() => closes.length > 0, "the host to close");
           assert.deepStrictEqual(closes, [new Error("rpc: too many malformed frames")]);
           assert.deepStrictEqual(await p, new Error("rpc: too many malformed frames"));
+          // the closed host takes nothing from r
           send(request(6, "sync"));
-          await sleep(5);
+          await turn();
           assert.deepStrictEqual(responses(out, 6), []);
         });
       }
 
       const testDefault = (options: HostOptions, max: number) => {
         it(`closes the host at ${max} malformed frames with ${JSON.stringify(options)}`, async function () {
-          const { sendRaw, closes } = connect(impl, { options });
+          const { out, send, sendRaw, closes } = connect(impl, { options });
           const empty = prefixed(new Uint8Array());
           sendRaw(...Array.from({ length: max - 1 }, () => empty));
-          await sleep(5);
+          await barrier({ out, send });
           assert.deepStrictEqual(closes, []);
           sendRaw(empty);
           await waitFor(() => closes.length > 0, "the host to close");
