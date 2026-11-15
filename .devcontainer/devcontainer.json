@@ -3,7 +3,7 @@
   "name": "protobuf development container",
   "dockerFile": "Dockerfile",
   "context": "..",
-  "postCreateCommand": "npm ci && go get ./... && bash hack/install.sh",
+  "postCreateCommand": "pnpm install --frozen-lockfile && go get ./... && bash hack/install.sh",
 
   // Set *default* container specific settings.json values on container create.
   "settings": {

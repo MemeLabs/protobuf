@@ -9,7 +9,7 @@ import { TickerClient } from "./apis/strims/examples/ticker/ticker_rpc";
 const proc =
   process.argv[process.argv.length - 1] === "go"
     ? spawn("go", ["run", path.join(__dirname, "..", "cmd", "server", ".")])
-    : spawn("npx", ["ts-node", path.join(__dirname, "server.ts")]);
+    : spawn("pnpm", ["exec", "ts-node", path.join(__dirname, "server.ts")]);
 
 const client = new Host(proc.stdin, proc.stdout);
 

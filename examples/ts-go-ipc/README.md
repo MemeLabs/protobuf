@@ -1,5 +1,5 @@
 ```
-npx ts-node src/client.ts
+pnpm exec ts-node src/client.ts
 ```
 
 ```

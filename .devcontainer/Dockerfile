@@ -9,6 +9,8 @@ ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 ARG NODE_VERSION=26.x
+# keep in sync with packageManager in package.json
+ARG PNPM_VERSION=12.21.0
 ARG GO_VERSION=1.27.4
 ARG PROTOC_VERSION=3.20.1
 
@@ -57,6 +59,8 @@ RUN \
   # Install node.js
   && curl -sL "https://deb.nodesource.com/setup_${NODE_VERSION}" | bash - \
   && apt-get install -y nodejs \
+  # Install pnpm (node no longer bundles corepack)
+  && npm install -g "pnpm@${PNPM_VERSION}" \
   # Install protoc
   && curl -LO "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" \
   && unzip "protoc-${PROTOC_VERSION}-linux-x86_64.zip" -d /usr/local \

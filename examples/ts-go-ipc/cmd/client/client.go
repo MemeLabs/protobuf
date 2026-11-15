@@ -35,7 +35,7 @@ func main() {
 	case "go":
 		cmd = exec.Command("go", "run", "./cmd/server/")
 	case "node":
-		cmd = exec.Command("npx", "ts-node", "./src/server.ts")
+		cmd = exec.Command("pnpm", "exec", "ts-node", "./src/server.ts")
 	default:
 		panic("invalid server name")
 	}
