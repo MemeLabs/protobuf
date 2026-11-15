@@ -6,7 +6,8 @@ import { Readable as GenericReadable } from "./stream";
 // Readable of messages, an rpc.Error, or undefined. A throw, rejection or
 // stream error is sent as an rpc.Error with its message and code. If the call
 // is cancelled or the connection closes, nothing more is sent and a returned
-// Readable is destroyed without an error.
+// Readable is destroyed without an error. A request over one of the host's
+// limits (see HostOptions) is refused without calling the handler.
 export type Callback<Request, Response> = (
   arg: Request,
   call: Call

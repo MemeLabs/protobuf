@@ -9,6 +9,7 @@ import {
   Undefined,
 } from "../apis/strims/rpc/rpc";
 import { Message, MessageClass } from "../pb/message";
+import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import ServiceRegistry from "./service";
 import { Readable as GenericReadable } from "./stream";
@@ -41,7 +42,25 @@ const decodeCallError = (b: Uint8Array): unknown => {
   }
 };
 
+const DEFAULT_MAX_MESSAGE_BYTES = 512 * 1024;
+const MIN_DEFAULT_STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
+const DEFAULT_MAX_CONCURRENT_CALLS = 128;
+const DEFAULT_MAX_HEADERS = 64;
+const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
+// what a queued stream response is charged beyond its frame
+const RESPONSE_OVERHEAD = 256;
+const HEADER_OVERHEAD = 128;
+
+// strims.rpc.errors.ErrorCode values
+const TOO_MANY_CONCURRENT_CALLS = 1003;
+const OVERFLOW = 1010;
+
 const connectionClosed = (): Error => new Error("rpc: connection closed");
+const messageTooLarge = (): Error => new Error("rpc: message too large");
+const malformedLength = (): Error => new Error("rpc: malformed message length");
+const tooManyHeaders = (): Error => new Error("rpc: too many headers");
+const streamBufferFull = (): unknown =>
+  new RPCError({ message: "rpc: stream response buffer full", code: OVERFLOW });
 
 // The error for a response of a kind the call can't take.
 const unexpectedKind = (kind: Call_Kind): Error =>
@@ -77,6 +96,129 @@ const concat = (chunks: Uint8Array[], len: number): Uint8Array => {
   return buf;
 };
 
+// An option's limit: def for 0, NaN or undefined, and none (Infinity) if negative.
+const limit = (v: number | undefined, def: number): number => (!v ? def : v < 0 ? Infinity : v);
+
+// The wire type of each of a Call's fields, by field number.
+const CALL_WIRE_TYPES = [-1, 0, 0, 2, 0, 2, 2];
+const LEN = 2;
+
+// A Call's fields read without decoding it.
+interface Envelope {
+  id: bigint;
+  parentId: bigint;
+  // the offset of the method's length, or -1
+  methodPos: number;
+  headers: number;
+  // the sum of the header entries' lengths
+  headerBytes: number;
+}
+
+const malformedCall = (): Error => new Error("rpc: malformed call");
+
+// Reads frame's envelope. It throws unless frame is a Call whose known fields
+// have their wire types and whose header entries' fields end at the entries'
+// lengths.
+const scanCall = (frame: Uint8Array): Envelope => {
+  const env: Envelope = {
+    id: BigInt(0),
+    parentId: BigInt(0),
+    methodPos: -1,
+    headers: 0,
+    headerBytes: 0,
+  };
+  const r = new Reader(frame);
+  while (r.pos < r.len) {
+    const tag = r.uint32();
+    const field = tag >>> 3;
+    const wireType = tag & 7;
+    if (field > 0 && field < CALL_WIRE_TYPES.length && wireType !== CALL_WIRE_TYPES[field]) {
+      throw malformedCall();
+    }
+    switch (field) {
+      case 1:
+        env.id = r.uint64();
+        break;
+      case 2:
+        env.parentId = r.uint64();
+        break;
+      case 3:
+        env.methodPos = r.pos;
+        r.skipType(wireType);
+        break;
+      case 6: {
+        const len = r.uint32();
+        const end = r.pos + len;
+        while (r.pos < end) {
+          const entryTag = r.uint32();
+          const entryField = entryTag >>> 3;
+          if ((entryField === 1 || entryField === 2) && (entryTag & 7) !== LEN) {
+            throw malformedCall();
+          }
+          r.skipType(entryTag & 7);
+        }
+        if (r.pos !== end) {
+          throw malformedCall();
+        }
+        env.headers++;
+        env.headerBytes += len;
+        break;
+      }
+      default:
+        r.skipType(wireType);
+    }
+  }
+  return env;
+};
+
+// The method of the Call env was read from.
+const methodOf = (frame: Uint8Array, env: Envelope): string => {
+  if (env.methodPos < 0) {
+    return "";
+  }
+  const r = new Reader(frame);
+  r.pos = env.methodPos;
+  return r.string();
+};
+
+/**
+ * A Host's limits. For each number, 0, NaN or omitted means the default, and a
+ * negative value means no limit.
+ */
+export interface HostOptions {
+  /**
+   * The longest frame read, in bytes, not counting its length prefix; default
+   * 512 KiB. A longer one closes the host with Error("rpc: message too large").
+   */
+  maxMessageBytes?: number;
+  /**
+   * The bytes of responses an expectMany stream holds unread, each counted as
+   * its frame plus 256, plus 128 per header; default the larger of 16 MiB and
+   * 4 × maxMessageBytes. A response that would take a non-empty backlog over
+   * it discards the backlog, cancels the call and ends the stream with an
+   * rpc.Error "rpc: stream response buffer full", code 1010.
+   */
+  maxStreamBufferBytes?: number;
+  /**
+   * The calls served at once, each from its request until its last response
+   * is sent or it is cancelled; default 128. More are answered with an
+   * rpc.Error "rpc: too many concurrent calls", code 1003.
+   */
+  maxConcurrentCalls?: number;
+  /** The header entries in a frame, repeated keys included; default 64. */
+  maxHeaders?: number;
+  /**
+   * The bytes of a frame's header entries, not counting each entry's tag and
+   * length; default 64 KiB. A frame over either header limit isn't decoded:
+   * a request is answered with an rpc.Error "rpc: too many headers", a
+   * response fails its call with Error("rpc: too many headers"), cancelling a
+   * stream, and a CANCEL cancels its call.
+   */
+  maxHeaderBytes?: number;
+  /** Called once when the host closes, with the error that closed it, if any. */
+  onClose?: (err?: Error) => void;
+}
+
 export interface UnaryCallOptions {
   /**
    * Response timeout in ms; default 5000. On timeout the host cancels the call
@@ -88,17 +230,20 @@ export interface UnaryCallOptions {
 
 // A call this host made, waiting for its responses.
 interface PendingCall {
-  // takes a response (a CALLBACK) to the call
-  handle(res: Call): void;
-  // ends the call with err
-  fail(err: Error): void;
+  // takes a response (a CALLBACK) to the call, frameBytes long
+  handle(res: Call, frameBytes: number): void;
+  // ends the call with err, cancelling it on the server if cancel is set
+  fail(err: Error, cancel?: boolean): void;
 }
 
 // A call this host is serving, until it sends its last response or the
 // peer cancels it.
 interface ServedCall {
+  id: bigint;
   done: boolean;
   stream?: Readable;
+  // whether the host paused stream
+  paused?: boolean;
 }
 
 /**
@@ -106,9 +251,13 @@ interface ServedCall {
  * peer's calls with service. Only r.on() is used; data chunks may split or
  * join frames anywhere.
  *
- * r's end, close or error event closes the host: pending calls fail, served
- * calls are cancelled, and nothing more is written. Half-close isn't
- * supported.
+ * r's end, close or error event, or a malformed or oversized length prefix,
+ * closes the host: pending calls fail, served calls are cancelled, and nothing
+ * more is written. Half-close isn't supported.
+ *
+ * If w has once(), served streams are paused from a w.write() that returns
+ * false until w emits drain, and requests refused for a limit meanwhile get no
+ * reply.
  */
 export default class Host {
   private w: Writable;
@@ -116,8 +265,10 @@ export default class Host {
   private callId: bigint;
   // the calls this host made, by id
   private callbacks: Map<bigint, PendingCall>;
-  // the calls this host is serving, by the peer's id for them
+  // the calls this host is serving, by the peer's id for them, and all of
+  // them, ids reused included
   private served: Map<bigint, ServedCall>;
+  private serving: Set<ServedCall>;
   private argWriter: Writer;
   private callWriter: Writer;
   // the bytes read and not yet dispatched, their length, and the length the
@@ -131,13 +282,23 @@ export default class Host {
   private writing: number;
   private deferred: boolean;
   private closed: boolean;
+  // whether w has once(), and whether its drain is awaited
+  private canDrain: boolean;
+  private blocked: boolean;
+  private maxMessageBytes: number;
+  private maxStreamBufferBytes: number;
+  private maxConcurrentCalls: number;
+  private maxHeaders: number;
+  private maxHeaderBytes: number;
+  private onClose: ((err?: Error) => void) | undefined;
 
-  constructor(w: Writable, r: Readable, service?: ServiceRegistry) {
+  constructor(w: Writable, r: Readable, service?: ServiceRegistry, options: HostOptions = {}) {
     this.w = w;
     this.service = service;
     this.callId = BigInt(0);
     this.callbacks = new Map<bigint, PendingCall>();
     this.served = new Map<bigint, ServedCall>();
+    this.serving = new Set<ServedCall>();
     this.argWriter = new Writer();
     this.callWriter = new Writer();
     this.chunks = [];
@@ -147,12 +308,26 @@ export default class Host {
     this.writing = 0;
     this.deferred = false;
     this.closed = false;
+    this.canDrain = typeof (w as { once?: unknown }).once === "function";
+    this.blocked = false;
+    this.maxMessageBytes = limit(options.maxMessageBytes, DEFAULT_MAX_MESSAGE_BYTES);
+    this.maxStreamBufferBytes = limit(
+      options.maxStreamBufferBytes,
+      Math.max(
+        MIN_DEFAULT_STREAM_BUFFER_BYTES,
+        4 * (isFinite(this.maxMessageBytes) ? this.maxMessageBytes : 0)
+      )
+    );
+    this.maxConcurrentCalls = limit(options.maxConcurrentCalls, DEFAULT_MAX_CONCURRENT_CALLS);
+    this.maxHeaders = limit(options.maxHeaders, DEFAULT_MAX_HEADERS);
+    this.maxHeaderBytes = limit(options.maxHeaderBytes, DEFAULT_MAX_HEADER_BYTES);
+    this.onClose = options.onClose;
 
     r.on("data", (data: ArrayBufferView | ArrayBuffer) => this.handleData(data));
     const shutdown = () => this.shutdown();
     r.on("end", shutdown);
     r.on("close", shutdown);
-    r.on("error", shutdown);
+    r.on("error", (err: Error) => this.shutdown(err));
   }
 
   public call(
@@ -180,10 +355,41 @@ export default class Host {
       return;
     }
     this.writing++;
+    let ok: boolean;
     try {
-      this.w.write(Call.encode(call, this.callWriter.reset().fork()).ldelim().finish().slice());
+      ok = this.w.write(
+        Call.encode(call, this.callWriter.reset().fork()).ldelim().finish().slice()
+      );
     } finally {
       this.writing--;
+    }
+    if (ok === false && this.canDrain && !this.blocked) {
+      this.blocked = true;
+      this.w.once("drain", () => this.unblock());
+      for (const served of Array.from(this.serving)) {
+        this.pause(served);
+      }
+    }
+  }
+
+  private pause(served: ServedCall) {
+    if (served.stream && !served.paused) {
+      served.paused = true;
+      served.stream.pause();
+    }
+  }
+
+  // Resumes the served streams paused while w was full.
+  private unblock() {
+    this.blocked = false;
+    if (this.closed) {
+      return;
+    }
+    for (const served of Array.from(this.serving)) {
+      if (served.paused) {
+        served.paused = false;
+        served.stream.resume();
+      }
     }
   }
 
@@ -247,7 +453,9 @@ export default class Host {
     // Items not yet pushed, and how the stream ends once they are read: an
     // error, or null for CLOSE. Items are pushed only on read (highWaterMark
     // 0), so destroying the stream with the error drops none.
-    const queue: T[] = [];
+    const queue: { v: T; cost: number }[] = [];
+    // the sum of the queued items' costs
+    let queued = 0;
     let ending: { err: Error | null } | undefined;
     // whether the consumer has asked for an item it hasn't been given
     let wanted = false;
@@ -258,7 +466,9 @@ export default class Host {
       }
       if (queue.length > 0) {
         wanted = false;
-        e.push(queue.shift());
+        const { v, cost } = queue.shift();
+        queued -= cost;
+        e.push(v);
       } else if (ending) {
         wanted = false;
         const { err } = ending;
@@ -317,20 +527,32 @@ export default class Host {
       e.off("close", handleClose);
     };
 
+    const abort = (err: Error) => {
+      finish();
+      this.cancel(call.id);
+      end(err);
+    };
+
     this.callbacks.set(call.id, {
-      handle: (res: Call) => {
+      handle: (res: Call, frameBytes: number) => {
         switch (res.kind) {
           case Call_Kind.CALL_KIND_DEFAULT: {
+            const cost = frameBytes + RESPONSE_OVERHEAD + HEADER_OVERHEAD * res.headers.size;
+            if (queue.length > 0 && queued + cost > this.maxStreamBufferBytes) {
+              queue.length = 0;
+              queued = 0;
+              abort(streamBufferFull() as Error);
+              break;
+            }
             let v: T;
             try {
               v = Message.decode(res.argument);
             } catch (err) {
-              finish();
-              this.cancel(call.id);
-              end(err as Error);
+              abort(err as Error);
               break;
             }
-            queue.push(v);
+            queue.push({ v, cost });
+            queued += cost;
             flush();
             break;
           }
@@ -348,9 +570,13 @@ export default class Host {
             end(unexpectedKind(res.kind));
         }
       },
-      fail: (err: Error) => {
-        finish();
-        end(err);
+      fail: (err: Error, cancel?: boolean) => {
+        if (cancel) {
+          abort(err);
+        } else {
+          finish();
+          end(err);
+        }
       },
     });
 
@@ -419,11 +645,18 @@ export default class Host {
       }
       if (n === 5) {
         // no length is this long: the stream is corrupt, and can't be resynced
-        this.shutdown();
+        const err = malformedLength();
+        this.shutdown(err, () => err);
         return undefined;
       }
       b = buf[n];
       len += (b & 127) * 2 ** (7 * n);
+    }
+
+    if (len > this.maxMessageBytes) {
+      const err = messageTooLarge();
+      this.shutdown(err, () => err);
+      return undefined;
     }
 
     const end = n + len;
@@ -432,7 +665,9 @@ export default class Host {
       return undefined;
     }
 
-    const frame = buf.subarray(n, end);
+    // a copy, unless buf holds no bytes past this frame
+    const frame =
+      buf.buffer.byteLength > end ? new Uint8Array(buf.subarray(n, end)) : buf.subarray(n, end);
     const rest = buf.subarray(end);
     this.chunks = rest.byteLength === 0 ? [] : [rest];
     this.buffered = rest.byteLength;
@@ -440,27 +675,46 @@ export default class Host {
     return frame;
   }
 
+  // Dispatches frame. One over a header limit isn't decoded.
   private handleFrame(frame: Uint8Array) {
-    let call: Call;
+    let env: Envelope;
+    let call: Call | undefined;
+    let method: string;
     try {
-      call = Call.decode(frame);
+      env = scanCall(frame);
+      if (env.headers <= this.maxHeaders && env.headerBytes <= this.maxHeaderBytes) {
+        call = Call.decode(frame);
+        method = call.method;
+      } else {
+        method = methodOf(frame, env);
+      }
     } catch {
       // a frame that doesn't decode is dropped
       return;
     }
 
     try {
-      switch (call.method) {
-        case CALLBACK_METHOD:
+      switch (method) {
+        case CALLBACK_METHOD: {
           // a response to a call this host made; ignored once the call is over
-          this.callbacks.get(call.parentId)?.handle(call);
+          const pending = this.callbacks.get(env.parentId);
+          if (call) {
+            pending?.handle(call, frame.byteLength);
+          } else {
+            pending?.fail(tooManyHeaders(), true);
+          }
           break;
+        }
         case CANCEL_METHOD:
           // matched by method: the Go runtime sends CANCEL as CALL_KIND_DEFAULT
-          this.cancelServed(call.parentId);
+          this.cancelServed(env.parentId);
           break;
         default:
-          this.handleCall(call);
+          if (call) {
+            this.handleCall(call);
+          } else {
+            this.refuse(env.id, new RPCError({ message: "rpc: too many headers" }));
+          }
       }
     } catch (e) {
       // a listener's error: rethrown later, so the read loop can go on
@@ -470,7 +724,25 @@ export default class Host {
     }
   }
 
+  // Answers request id with err, unless w is full.
+  private refuse(id: bigint, err: RPCError) {
+    if (!this.blocked) {
+      this.reply(id, err, Call_Kind.CALL_KIND_ERROR);
+    }
+  }
+
   private handleCall(call: Call) {
+    if (this.serving.size >= this.maxConcurrentCalls) {
+      this.refuse(
+        call.id,
+        new RPCError({
+          message: "rpc: too many concurrent calls",
+          code: TOO_MANY_CONCURRENT_CALLS,
+        })
+      );
+      return;
+    }
+
     const methods = this.service?.methods;
     if (!methods || !Object.prototype.hasOwnProperty.call(methods, call.method)) {
       this.reply(
@@ -490,11 +762,10 @@ export default class Host {
     }
 
     if (res instanceof Promise) {
-      const served: ServedCall = { done: false };
-      this.served.set(call.id, served);
+      const served = this.serve(call.id);
       const settle = (v: unknown) => {
         if (!served.done) {
-          this.unserve(call.id, served);
+          this.unserve(served);
           this.respond(call.id, v);
         } else if (v instanceof Readable) {
           // cancelled before the handler's promise settled
@@ -538,19 +809,18 @@ export default class Host {
   // Sends the stream's items, then one CLOSE when it ends, or one ERROR if it
   // errors, unless the peer cancels it first.
   private serveStream(id: bigint, stream: Readable) {
-    const served: ServedCall = { done: false, stream };
-    this.served.set(id, served);
+    const served = this.serve(id, stream);
 
     const finish = (res: unknown, kind: Call_Kind) => {
       if (!served.done) {
-        this.unserve(id, served);
+        this.unserve(served);
         this.reply(id, res, kind);
       }
     };
 
     stream.on("data", (v: unknown) => {
       if (!served.done && !this.reply(id, v, Call_Kind.CALL_KIND_DEFAULT)) {
-        this.unserve(id, served);
+        this.unserve(served);
         stream.destroy();
       }
     });
@@ -558,6 +828,9 @@ export default class Host {
     stream.on("error", (e: unknown) => finish(toCallError(e), Call_Kind.CALL_KIND_ERROR));
     // destroyed, with no error, before it ended
     stream.on("close", () => finish(new Close(), Call_Kind.CALL_KIND_CLOSE));
+    if (this.blocked) {
+      this.pause(served);
+    }
 
     // An already finished stream may have emitted its last event; a timer runs
     // after any still pending on process.nextTick.
@@ -573,26 +846,39 @@ export default class Host {
     }
   }
 
-  private unserve(id: bigint, served: ServedCall) {
+  private serve(id: bigint, stream?: Readable): ServedCall {
+    const served: ServedCall = { id, done: false, stream };
+    this.served.set(id, served);
+    this.serving.add(served);
+    return served;
+  }
+
+  private unserve(served: ServedCall) {
     served.done = true;
-    if (this.served.get(id) === served) {
-      this.served.delete(id);
+    this.serving.delete(served);
+    if (this.served.get(served.id) === served) {
+      this.served.delete(served.id);
     }
   }
 
-  // Stops serving call id and sends nothing more for it; a stream is destroyed
-  // without an error.
+  // Stops serving the call and sends nothing more for it; a stream is
+  // destroyed without an error.
+  private stopServing(served: ServedCall) {
+    this.unserve(served);
+    served.stream?.destroy();
+  }
+
   private cancelServed(id: bigint) {
     const served = this.served.get(id);
     if (served) {
-      this.unserve(id, served);
-      served.stream?.destroy();
+      this.stopServing(served);
     }
   }
 
-  // Closes the host: dispatches the whole frames already read, then fails
-  // pending calls, cancels served ones and stops writing.
-  private shutdown() {
+  // Closes the host with err, the error that closed it, if any: dispatches
+  // the whole frames already read, then fails pending calls with callErr(),
+  // cancels served ones, stops writing and calls onClose.
+  private shutdown(err?: Error, callErr: () => Error = connectionClosed) {
     if (this.closed) {
       return;
     }
@@ -610,11 +896,13 @@ export default class Host {
     const pending = Array.from(this.callbacks.values());
     this.callbacks.clear();
     for (const call of pending) {
-      call.fail(connectionClosed());
+      call.fail(callErr());
     }
 
-    for (const id of Array.from(this.served.keys())) {
-      this.cancelServed(id);
+    for (const served of Array.from(this.serving)) {
+      this.stopServing(served);
     }
+
+    this.onClose?.(err);
   }
 }
