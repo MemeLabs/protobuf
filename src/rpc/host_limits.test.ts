@@ -115,6 +115,7 @@ const headers = (n: number): Map<string, Uint8Array> => {
 };
 
 const withHeaders65 = (c: ICall): ICall => ({ ...c, headers: headers(65) });
+const tooManyHeaders = ["CALL_KIND_ERROR", "rpc: too many headers", 0];
 
 // a header entry "k" whose key and value fields come to n bytes
 const headerOfBytes = (n: number): Map<string, Uint8Array> => {
@@ -1035,6 +1036,19 @@ for (const impl of impls) {
         return join([head, argHeader, hiddenBytes]);
       };
 
+      // a request "headers" with a header entry whose key is a varint 2
+      // followed by a field 2 of 0, which Call.decode takes as a 2-byte key
+      const entryKeyVarint = (): Uint8Array =>
+        new Writer()
+          .uint32(8)
+          .uint64(BigInt(1))
+          .uint32(26)
+          .string("headers")
+          .uint32(50)
+          .bytes(new Uint8Array([8, 2, 16, 0]))
+          .finish()
+          .slice();
+
       // a request "headers" whose envelope is malformed so as to hide 100
       // header entries from a scan that skips fields by their wire type
       const hidden = (): Uint8Array => {
@@ -1083,6 +1097,10 @@ for (const impl of impls) {
         ["one with a field of the wrong wire type", wrongType],
         ["one that hides headers in a field of the wrong wire type", hidden],
         ["one whose header entry's key isn't length-delimited", entryHide],
+        [
+          "one whose header entry's key is a varint that Call.decode reads as a length",
+          entryKeyVarint,
+        ],
       ] as const) {
         it(`drops a malformed frame: ${name}`, async function () {
           const t = testService(impl);
@@ -1417,7 +1435,7 @@ for (const impl of impls) {
       });
 
       it("answers nothing to empty frames, or to requests with id 0", async function () {
-        const { out, r, send } = connect(impl);
+        const { out, r, send } = connect(impl, { options: { maxMalformedFrames: -1 } });
         r.write(new Uint8Array(64 * KiB));
         send({ method: "nope", argument: encodeArg(new RPCCallUnaryRequest()) });
         send(request(7, "nope"));
@@ -1441,6 +1459,162 @@ for (const impl of impls) {
         await waitFor(() => t.streams.length === 1, "the stream");
         send({ ...cancel(1), id: BigInt(0) });
         await waitFor(() => t.streams[0].destroyed, "the stream to be destroyed");
+      });
+    });
+
+    describe("scan and decode", function () {
+      const decodes = (b: Uint8Array) => {
+        try {
+          Call.decode(b);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      // groups of field 7 nested n deep, ending with an end-group tag for
+      // field end
+      const groups =
+        (n: number, end = 7) =>
+        (w: Writer) => {
+          for (let i = 0; i < n; i++) w.uint32((7 << 3) | 3);
+          for (let i = 0; i < n; i++) w.uint32(((i === n - 1 ? end : 7) << 3) | 4);
+          return w;
+        };
+      // the same inside a header entry
+      const entryGroups =
+        (n: number, end = 7) =>
+        (w: Writer) =>
+          w.uint32(50).bytes(groups(n, end)(new Writer().uint32(10).string("g")).finish().slice());
+      // a header entry whose key runs past the entry, into a Call field
+      const overrunEntry = (w: Writer) =>
+        w
+          .uint32(50)
+          .bytes(new Uint8Array([10, 2]))
+          .uint32(32)
+          .uint32(0);
+
+      // a Call with id, parentId, method and n headers, then extra
+      const body = (
+        id: number,
+        parentId: number,
+        method: string,
+        n: number,
+        extra: (w: Writer) => Writer
+      ) => {
+        const w = new Writer().uint32(8).uint64(BigInt(id));
+        if (parentId) w.uint32(16).uint64(BigInt(parentId));
+        w.uint32(26).string(method);
+        for (let i = 0; i < n; i++) w.uint32(50).fork().uint32(10).string(`h${i}`).ldelim();
+        return extra(w).finish().slice();
+      };
+
+      const cases: [string, (w: Writer) => Writer][] = [
+        ["a mismatched end-group tag", groups(1, 9)],
+        ["a mismatched end-group tag in a header entry", entryGroups(1, 9)],
+        ["99 nested groups", groups(99)],
+        ["100 nested groups", groups(100)],
+        ["101 nested groups", groups(101)],
+        ["98 nested groups in a header entry", entryGroups(98)],
+        ["99 nested groups in a header entry", entryGroups(99)],
+        ["a header entry that runs past its length", overrunEntry],
+      ];
+      for (const [name, extra] of cases) {
+        it(`serves, refuses or drops a frame with ${name} as Call.decode takes it`, async function () {
+          const t = testService(impl);
+          const { out, sendRaw, send } = connect(impl, { service: t.service });
+          send(request(1, "stream"));
+          await waitFor(() => t.streams.length === 1, "the stream");
+          const within = body(5, 0, "sync", 0, extra);
+          const overRequest = body(6, 0, "sync", 65, extra);
+          const overCancel = body(7, 1, "CANCEL", 65, extra);
+          sendRaw(prefixed(within));
+          sendRaw(prefixed(overRequest));
+          sendRaw(prefixed(overCancel));
+          send(request(8, "sync"));
+          await waitFor(() => responses(out, 8).length > 0, "the reply to 8");
+          const ok = decodes(within);
+          assert.strictEqual(decodes(overRequest), ok);
+          assert.strictEqual(decodes(overCancel), ok);
+          assert.deepStrictEqual(responses(out, 5), ok ? [["CALL_KIND_DEFAULT"]] : []);
+          assert.deepStrictEqual(responses(out, 6), ok ? [tooManyHeaders] : []);
+          assert.strictEqual(t.streams[0].destroyed, ok);
+        });
+      }
+    });
+
+    describe("malformed frames", function () {
+      const bad: [string, () => Uint8Array][] = [
+        ["an empty frame", () => prefixed(new Uint8Array())],
+        ["a truncated tag", () => prefixed(new Uint8Array([0x80]))],
+        ["a request with id 0", () => frame({ method: "sync" })],
+        ["a field of the wrong wire type", () => prefixed(new Uint8Array([0x0a, 0x00]))],
+        [
+          "a request whose argument doesn't decode",
+          () => frame({ ...request(9, "sync"), argument: new Uint8Array([0x08]) }),
+        ],
+      ];
+
+      for (const [name, make] of bad) {
+        it(`closes the host at maxMalformedFrames, counting ${name}`, async function () {
+          const t = testService(impl);
+          const { host, out, sendRaw, send, closes } = connect(impl, {
+            service: t.service,
+            options: { maxMalformedFrames: 3 },
+          });
+          const p = unary(host).catch((e: unknown) => e);
+          sendRaw(make(), make());
+          send(request(5, "sync"));
+          await waitFor(() => responses(out, 5).length > 0, "the reply to 5");
+          assert.deepStrictEqual(closes, []);
+          sendRaw(make());
+          await waitFor(() => closes.length > 0, "the host to close");
+          assert.deepStrictEqual(closes, [new Error("rpc: too many malformed frames")]);
+          assert.deepStrictEqual(await p, new Error("rpc: too many malformed frames"));
+          send(request(6, "sync"));
+          await sleep(5);
+          assert.deepStrictEqual(responses(out, 6), []);
+        });
+      }
+
+      const testDefault = (options: HostOptions, max: number) => {
+        it(`closes the host at ${max} malformed frames with ${JSON.stringify(options)}`, async function () {
+          const { sendRaw, closes } = connect(impl, { options });
+          const empty = prefixed(new Uint8Array());
+          sendRaw(...Array.from({ length: max - 1 }, () => empty));
+          await sleep(5);
+          assert.deepStrictEqual(closes, []);
+          sendRaw(empty);
+          await waitFor(() => closes.length > 0, "the host to close");
+          assert.deepStrictEqual(closes, [new Error("rpc: too many malformed frames")]);
+        });
+      };
+      testDefault({}, 64);
+      testDefault({ maxMalformedFrames: 0 }, 64);
+      testDefault({ maxMalformedFrames: NaN }, 64);
+
+      it("has no limit when negative", async function () {
+        const { out, r, send, closes } = connect(impl, { options: { maxMalformedFrames: -1 } });
+        r.write(new Uint8Array(10000));
+        send(request(5, "nope"));
+        await waitFor(() => responses(out, 5).length > 0, "the reply to 5");
+        assert.deepStrictEqual(closes, []);
+      });
+
+      it("doesn't count frames over a header limit, or responses to unknown calls", async function () {
+        const t = testService(impl);
+        const { out, send, closes } = connect(impl, {
+          service: t.service,
+          options: { maxMalformedFrames: 2 },
+        });
+        for (let i = 0; i < 10; i++) {
+          send(withHeaders65(request(10 + i, "sync")));
+          send(callback(500 + i, DEFAULT, new RPCCallUnaryResponse()));
+        }
+        send(request(5, "sync"));
+        await waitFor(() => responses(out, 5).length > 0, "the reply to 5");
+        assert.deepStrictEqual(closes, []);
+        assert.deepStrictEqual(responses(out, 10), [tooManyHeaders]);
       });
     });
   });

@@ -48,6 +48,7 @@ const MIN_DEFAULT_WRITE_BUFFER_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_CALLS = 128;
 const DEFAULT_MAX_HEADERS = 64;
 const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
+const DEFAULT_MAX_MALFORMED_FRAMES = 64;
 // what a queued stream response is charged beyond its frame
 const RESPONSE_OVERHEAD = 256;
 const HEADER_OVERHEAD = 128;
@@ -73,6 +74,7 @@ const messageTooLarge = (): Error => new Error("rpc: message too large");
 const malformedLength = (): Error => new Error("rpc: malformed message length");
 const tooManyHeaders = (): Error => new Error("rpc: too many headers");
 const peerNotReading = (): Error => new Error("rpc: peer not reading");
+const tooManyMalformedFrames = (): Error => new Error("rpc: too many malformed frames");
 const streamBufferFull = (): unknown =>
   new RPCError({ message: "rpc: stream response buffer full", code: OVERFLOW });
 
@@ -127,9 +129,9 @@ interface Envelope {
 
 const malformedCall = (): Error => new Error("rpc: malformed call");
 
-// Reads frame's envelope. It throws unless frame is a Call whose known fields
-// have their wire types and whose header entries' fields end at the entries'
-// lengths.
+// Reads frame's envelope, taking the levels Call.decode takes. It throws
+// unless frame is a Call that Call.decode takes whose known fields, and its
+// header entries' keys and values, have their wire types.
 const scanCall = (frame: Uint8Array): Envelope => {
   const env: Envelope = {
     id: BigInt(0),
@@ -139,7 +141,8 @@ const scanCall = (frame: Uint8Array): Envelope => {
     headerBytes: 0,
   };
   const r = new Reader(frame);
-  while (r.pos < r.len) {
+  r.enter();
+  while (r.pos < r.end) {
     const tag = r.uint32();
     const field = tag >>> 3;
     const wireType = tag & 7;
@@ -155,28 +158,26 @@ const scanCall = (frame: Uint8Array): Envelope => {
         break;
       case 3:
         env.methodPos = r.pos;
-        r.skipType(wireType);
+        r.skipType(wireType, field);
         break;
       case 6: {
         const len = r.uint32();
-        const end = r.pos + len;
-        while (r.pos < end) {
+        const parentEnd = r.enter(len);
+        while (r.pos < r.end) {
           const entryTag = r.uint32();
           const entryField = entryTag >>> 3;
           if ((entryField === 1 || entryField === 2) && (entryTag & 7) !== LEN) {
             throw malformedCall();
           }
-          r.skipType(entryTag & 7);
+          r.skipType(entryTag & 7, entryField);
         }
-        if (r.pos !== end) {
-          throw malformedCall();
-        }
+        r.leave(parentEnd);
         env.headers++;
         env.headerBytes += len;
         break;
       }
       default:
-        r.skipType(wireType);
+        r.skipType(wireType, field);
     }
   }
   return env;
@@ -233,6 +234,14 @@ export interface HostOptions {
    * no writableLength.
    */
   maxWriteBufferBytes?: number;
+  /**
+   * The malformed frames the host drops before it closes with Error("rpc: too
+   * many malformed frames"); default 64. Counts frames that don't decode,
+   * requests with id 0, and requests whose argument doesn't decode (which are
+   * still refused), not frames over a header limit or responses to unknown
+   * calls.
+   */
+  maxMalformedFrames?: number;
   /**
    * Called once when the host closes, with the error that closed it, if any.
    * Its throw is rethrown from a timer.
@@ -326,6 +335,9 @@ export default class Host {
   private maxHeaders: number;
   private maxHeaderBytes: number;
   private maxWriteBufferBytes: number;
+  private maxMalformedFrames: number;
+  // the malformed frames dropped
+  private malformedFrames: number;
   private onClose: ((err?: Error) => void) | undefined;
 
   constructor(w: Writable, r: Readable, service?: ServiceRegistry, options: HostOptions = {}) {
@@ -366,6 +378,8 @@ export default class Host {
       options.maxWriteBufferBytes,
       Math.max(MIN_DEFAULT_WRITE_BUFFER_BYTES, 4 * messageBytes)
     );
+    this.maxMalformedFrames = limit(options.maxMalformedFrames, DEFAULT_MAX_MALFORMED_FRAMES);
+    this.malformedFrames = 0;
     this.onClose = options.onClose;
 
     r.on("data", (data: ArrayBufferView | ArrayBuffer) => this.handleData(data));
@@ -803,9 +817,10 @@ export default class Host {
   }
 
   // Dispatches frame. One over a header limit isn't decoded; a request with
-  // id 0, an empty frame among them, is dropped.
+  // id 0, an empty frame among them, is dropped as malformed.
   private handleFrame(frame: Uint8Array) {
     if (frame.byteLength === 0) {
+      this.dropMalformed();
       return;
     }
     let env: Envelope;
@@ -817,6 +832,7 @@ export default class Host {
       if (!within || env.id === ZERO) {
         method = methodOf(frame, env);
         if (env.id === ZERO && method !== CALLBACK_METHOD && method !== CANCEL_METHOD) {
+          this.dropMalformed();
           return;
         }
       }
@@ -825,7 +841,7 @@ export default class Host {
         method = call.method;
       }
     } catch {
-      // a frame that doesn't decode is dropped
+      this.dropMalformed();
       return;
     }
 
@@ -860,6 +876,14 @@ export default class Host {
     }
   }
 
+  // Counts a malformed frame dropped, closing the host at maxMalformedFrames.
+  private dropMalformed() {
+    if (++this.malformedFrames >= this.maxMalformedFrames) {
+      const err = tooManyMalformedFrames();
+      this.close(err, () => err);
+    }
+  }
+
   // Answers request id with err, unless w is full.
   private refuse(id: bigint, err: RPCError) {
     if (!this.blocked) {
@@ -891,6 +915,7 @@ export default class Host {
       arg = method.reqType.decode(call.argument);
     } catch (e) {
       this.refuse(call.id, toCallError(e));
+      this.dropMalformed();
       return;
     }
 
