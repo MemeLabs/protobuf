@@ -3,6 +3,12 @@ import { readFloat32, readFloat64 } from "./float";
 
 const textDecoder = new TextDecoder();
 
+// Thrown by any read past the end of the buffer.
+const outOfRange = (): Error => new Error("index out of range");
+
+// A varint is at most 10 bytes.
+const invalidVarint = (): Error => new Error("invalid varint");
+
 export default class Reader {
   buf: Uint8Array;
   pos = 0;
@@ -17,7 +23,7 @@ export default class Reader {
 
   skip(n: number): void {
     if (this.pos + n > this.len) {
-      throw new Error("index out of range");
+      throw outOfRange();
     }
     this.pos += n;
   }
@@ -25,9 +31,7 @@ export default class Reader {
   skipType(wireType: number): void {
     switch (wireType) {
       case 0:
-        do {
-          this.skip(1);
-        } while (this.buf[this.pos] & 0x80);
+        this.skipVarint();
         break;
       case 1:
         this.skip(8);
@@ -35,10 +39,31 @@ export default class Reader {
       case 2:
         this.skip(this.uint32());
         break;
+      case 3:
+        // a group: its fields, up to the end-group tag
+        for (let tag = this.uint32(); (tag & 7) !== 4; tag = this.uint32()) {
+          this.skipType(tag & 7);
+        }
+        break;
       case 5:
         this.skip(4);
         break;
+      default:
+        // 4, an end-group tag outside a group, and the unused 6 and 7
+        throw new Error(`invalid wire type ${wireType}`);
     }
+  }
+
+  private skipVarint(): void {
+    for (let i = 0; i < 10; i++) {
+      if (this.pos >= this.len) {
+        throw outOfRange();
+      }
+      if (this.buf[this.pos++] < 128) {
+        return;
+      }
+    }
+    throw invalidVarint();
   }
 
   int32(): number {
@@ -49,44 +74,77 @@ export default class Reader {
     return BigInt.asIntN(64, this.uint64());
   }
 
+  // Reads a varint's low 32 bits. Reading past the end gives undefined, which
+  // ends the varint, so one check after it is enough.
   uint32(): number {
-    let v = this.buf[this.pos] & 127;
-    if (this.buf[this.pos++] < 128) return v >>> 0;
-    v |= (this.buf[this.pos] & 127) << 7;
-    if (this.buf[this.pos++] < 128) return v >>> 0;
-    v |= (this.buf[this.pos] & 127) << 14;
-    if (this.buf[this.pos++] < 128) return v >>> 0;
-    v |= (this.buf[this.pos] & 127) << 21;
-    if (this.buf[this.pos++] < 128) return v >>> 0;
-    v |= (this.buf[this.pos] & 15) << 28;
-    this.pos++;
+    const buf = this.buf;
+    let pos = this.pos;
+    let b = buf[pos++];
+    let v = b & 127;
+    if (b > 127) {
+      b = buf[pos++];
+      v |= (b & 127) << 7;
+      if (b > 127) {
+        b = buf[pos++];
+        v |= (b & 127) << 14;
+        if (b > 127) {
+          b = buf[pos++];
+          v |= (b & 127) << 21;
+          if (b > 127) {
+            b = buf[pos++];
+            v |= (b & 15) << 28;
+            // the rest of a sign-extended 10-byte varint; bits past 32 are dropped
+            for (let n = 5; b > 127; n++) {
+              if (n === 10) {
+                throw invalidVarint();
+              }
+              b = buf[pos++];
+            }
+          }
+        }
+      }
+    }
+    if (pos > buf.byteLength) {
+      throw outOfRange();
+    }
+    this.pos = pos;
     return v >>> 0;
   }
 
   uint64(): bigint {
-    let lo = this.buf[this.pos] & 127;
-    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
-    lo |= (this.buf[this.pos] & 127) << 7;
-    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
-    lo |= (this.buf[this.pos] & 127) << 14;
-    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
-    lo |= (this.buf[this.pos] & 127) << 21;
-    if (this.buf[this.pos++] < 128) return BigInt(lo >>> 0);
-    lo |= (this.buf[this.pos] & 127) << 28;
+    const buf = this.buf;
+    let pos = this.pos;
+    let b: number;
 
-    let hi = (this.buf[this.pos] & 127) >> 4;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
-    hi |= (this.buf[this.pos] & 127) << 3;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
-    hi |= (this.buf[this.pos] & 127) << 10;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
-    hi |= (this.buf[this.pos] & 127) << 17;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
-    hi |= (this.buf[this.pos] & 127) << 24;
-    if (this.buf[this.pos++] < 128) return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
-    hi |= (this.buf[this.pos] & 127) << 31;
-    this.pos++;
-    return (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
+    // bits 0 to 27, 7 a byte
+    let lo = 0;
+    let shift = 0;
+    do {
+      b = buf[pos++];
+      lo |= (b & 127) << shift;
+      shift += 7;
+    } while (b > 127 && shift < 28);
+
+    // the 5th byte's bits straddle lo and hi; bits 35 to 63 follow
+    let hi = 0;
+    if (b > 127) {
+      b = buf[pos++];
+      lo |= (b & 15) << 28;
+      hi = (b & 127) >> 4;
+      for (shift = 3; b > 127; shift += 7) {
+        if (shift > 31) {
+          throw invalidVarint();
+        }
+        b = buf[pos++];
+        hi |= (b & 127) << shift;
+      }
+    }
+
+    if (pos > buf.byteLength) {
+      throw outOfRange();
+    }
+    this.pos = pos;
+    return hi === 0 ? BigInt(lo >>> 0) : (BigInt(hi >>> 0) << big32) | BigInt(lo >>> 0);
   }
 
   sint32(): number {
@@ -118,6 +176,9 @@ export default class Reader {
   }
 
   double(): number {
+    if (this.pos + 8 > this.len) {
+      throw outOfRange();
+    }
     const v = readFloat64(this.buf, this.pos);
     this.pos += 8;
     return v;
@@ -129,8 +190,12 @@ export default class Reader {
 
   bytes(): Uint8Array {
     const len = this.uint32();
-    const v = this.buf.subarray(this.pos, this.pos + len);
-    this.pos += len;
+    const end = this.pos + len;
+    if (end > this.len) {
+      throw outOfRange();
+    }
+    const v = this.buf.subarray(this.pos, end);
+    this.pos = end;
     return v;
   }
 
@@ -139,16 +204,19 @@ export default class Reader {
   }
 
   sfixed32(): number {
-    this.pos += 4;
-    return (
-      this.buf[this.pos - 4] |
-      (this.buf[this.pos - 3] << 8) |
-      (this.buf[this.pos - 2] << 16) |
-      (this.buf[this.pos - 1] << 24)
-    );
+    const buf = this.buf;
+    const pos = this.pos;
+    if (pos + 4 > buf.byteLength) {
+      throw outOfRange();
+    }
+    this.pos = pos + 4;
+    return buf[pos] | (buf[pos + 1] << 8) | (buf[pos + 2] << 16) | (buf[pos + 3] << 24);
   }
 
   float(): number {
+    if (this.pos + 4 > this.len) {
+      throw outOfRange();
+    }
     const v = readFloat32(this.buf, this.pos);
     this.pos += 4;
     return v;
