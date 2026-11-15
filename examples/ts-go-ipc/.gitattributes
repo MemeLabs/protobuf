@@ -1,4 +1,4 @@
-src/apis/* linguist-generated
-pkg/apis/* linguist-generated
-go.sum linguist-generated
-pnpm-lock.yaml linguist-generated
+*.pb.go linguist-generated=true
+*.pb.ts linguist-generated=true
+go.sum linguist-generated=true
+pnpm-lock.yaml linguist-generated=true
