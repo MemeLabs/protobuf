@@ -62,8 +62,18 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	env, err := scanEnvelope(b)
+	if err != nil {
+		httpServeError(http.StatusBadRequest, err, w)
+		return
+	}
+	if env.overHeaderLimit() {
+		httpServeError(http.StatusBadRequest, ErrTooManyHeaders, w)
+		return
+	}
+
 	req := &pb.Call{}
-	if err := proto.Unmarshal(b, req); err != nil {
+	if err := envelopeUnmarshal.Unmarshal(b, req); err != nil {
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}

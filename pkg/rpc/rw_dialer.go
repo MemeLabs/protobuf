@@ -11,7 +11,6 @@ import (
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"github.com/MemeLabs/protobuf/pkg/bytereader"
 	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
 )
 
 const defaultMaxMessageBytes = 512 * 1024
@@ -65,6 +64,7 @@ func (d *RWDialer) Dial(ctx context.Context, dispatcher Dispatcher) (Transport, 
 		maxMessageBytes:      maxMessageBytes,
 		maxStreamBufferBytes: maxStreamBufferBytes,
 		dispatcher:           dispatcher,
+		rejections:           make(chan rejection, rejectionQueueLen),
 		calls: &rwParentCallMap{
 			callsIn:  map[uint64]*CallIn{},
 			callsOut: map[uint64]*CallOut{},
@@ -81,6 +81,7 @@ type RWTransport struct {
 	maxMessageBytes      int
 	maxStreamBufferBytes int
 	dispatcher           Dispatcher
+	rejections           chan rejection
 	calls                *rwParentCallMap
 	writeLock            sync.Mutex
 	dispatchLock         sync.Mutex
@@ -93,6 +94,8 @@ type RWTransport struct {
 // ErrTransportClosed, ReadWriter is closed if it is an io.Closer, and no more
 // frames are dispatched.
 func (t *RWTransport) Listen() error {
+	go t.sendRejections()
+
 	errc := make(chan error, 1)
 	go func() { errc <- t.readLoop() }()
 
@@ -150,8 +153,8 @@ func (t *RWTransport) dispatch(b []byte) error {
 	}
 
 	// The frame was read in full, so framing is intact: skip only this frame.
-	req := &pb.Call{}
-	if err := proto.Unmarshal(b, req); err != nil {
+	env, err := scanEnvelope(b)
+	if err != nil {
 		t.logger.Warn(
 			"rpc transport dropped malformed frame",
 			zap.Int("length", len(b)),
@@ -160,12 +163,82 @@ func (t *RWTransport) dispatch(b []byte) error {
 		return nil
 	}
 
+	var req *pb.Call
+	if env.overHeaderLimit() {
+		t.logger.Warn(
+			"rpc transport rejected frame with too many headers",
+			zap.Uint64("id", env.id),
+			zap.ByteString("method", env.method),
+			zap.Int("headers", env.headers),
+			zap.Int("headerBytes", env.headerBytes),
+		)
+		switch string(env.method) {
+		case cancelMethod:
+			req = &pb.Call{Id: env.id, ParentId: env.parentID, Method: cancelMethod}
+		case callbackMethod:
+			if call := t.calls.CallOut(env.parentID); call != nil {
+				call.fail(ErrTooManyHeaders)
+			}
+			return nil
+		default:
+			t.reject(env.id, ErrTooManyHeaders)
+			return nil
+		}
+	} else {
+		req = &pb.Call{}
+		if err := envelopeUnmarshal.Unmarshal(b, req); err != nil {
+			t.logger.Warn(
+				"rpc transport dropped malformed frame",
+				zap.Int("length", len(b)),
+				zap.Error(err),
+			)
+			return nil
+		}
+	}
+
 	call := NewCallIn(t.ctx, req, t.calls.Accessor(req.ParentId), t.send)
 	call.frameBytes = len(b)
 
 	t.calls.SetCallIn(req.Id, call)
 	t.dispatcher.Dispatch(call, func() { t.calls.DeleteCallIn(req.Id) })
 	return nil
+}
+
+// rejectionQueueLen is how many rejections may wait to be sent.
+const rejectionQueueLen = 64
+
+// rejection is an ERROR response to send to request id.
+type rejection struct {
+	id  uint64
+	err error
+}
+
+// reject queues an ERROR response with err to request id without blocking,
+// or drops it if the queue is full.
+func (t *RWTransport) reject(id uint64, err error) {
+	select {
+	case t.rejections <- rejection{id, err}:
+	default:
+		t.logger.Warn(
+			"rpc transport dropped rejection",
+			zap.Uint64("id", id),
+			zap.Error(err),
+		)
+	}
+}
+
+// sendRejections sends queued rejections until the transport stops.
+func (t *RWTransport) sendRejections() {
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case r := <-t.rejections:
+			if err := sendError(t.ctx, r.id, r.err, t.send); err != nil {
+				t.logger.Debug("rpc transport failed to send rejection", zap.Error(err))
+			}
+		}
+	}
 }
 
 // close cancels incoming calls, fails pending outgoing calls with

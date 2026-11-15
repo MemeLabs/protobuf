@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	// "sync"
 
@@ -52,6 +53,14 @@ var ErrTransportClosed = errors.New("rpc: transport closed")
 // server.
 var ErrStreamBufferFull = errors.New("rpc: stream response buffer full")
 
+// ErrTooManyHeaders is the error for a received frame whose headers exceed
+// MaxHeaders or MaxHeaderBytes: the ERROR response to such a request (from
+// HTTPServer, a 400 with its message), and the error of the call such a
+// response belongs to.
+var ErrTooManyHeaders = errors.New("rpc: too many headers")
+
+var errInvalidFieldNumber = errors.New("rpc: invalid field number")
+
 func transportClosedError(cause error) error {
 	return fmt.Errorf("%w: %v", ErrTransportClosed, cause)
 }
@@ -62,7 +71,7 @@ func unmarshalResponse(kind pb.Call_Kind, b []byte, v proto.Message) error {
 		return proto.Unmarshal(b, v)
 	case pb.Call_CALL_KIND_ERROR:
 		ev := &pb.Error{}
-		if err := proto.Unmarshal(b, ev); err != nil {
+		if err := envelopeUnmarshal.Unmarshal(b, ev); err != nil {
 			return err
 		}
 		return ev
@@ -99,6 +108,13 @@ func send(ctx context.Context, id, parentID uint64, method string, kind pb.Call_
 		Headers:  map[string][]byte{},
 	}
 	return fn(ctx, rc)
+}
+
+// sendError sends fn an ERROR response to call parentID with err's message
+// and code.
+func sendError(ctx context.Context, parentID uint64, err error, fn SendFunc) error {
+	res := &pb.Error{Message: err.Error(), Code: ErrorCode(err)}
+	return send(ctx, atomic.AddUint64(nextID, 1), parentID, callbackMethod, pb.Call_CALL_KIND_ERROR, res, fn)
 }
 
 func marshalAppendLengthDelimited(b []byte, m proto.Message) ([]byte, error) {

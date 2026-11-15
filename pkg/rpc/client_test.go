@@ -596,8 +596,8 @@ func TestCliStreamBufferCountsWholeFrame(t *testing.T) {
 	go func() { errc <- c.client.CallStreaming(context.Background(), "silent", &pb.Error{}, ch) }()
 	call := cliFindCallOut(t, c.clientT)
 
-	// 20 frames of 100 KiB, each with a tiny argument.
-	hdr := map[string][]byte{"h": make([]byte, 100<<10)}
+	// 20 frames of 60 KiB, each with a tiny argument.
+	hdr := map[string][]byte{"h": make([]byte, 60<<10)}
 	arg, err := proto.Marshal(&pb.Error{Message: "x"})
 	if err != nil {
 		t.Fatal(err)
@@ -615,8 +615,8 @@ func TestCliStreamBufferCountsWholeFrame(t *testing.T) {
 }
 
 // Tiny headers take far more memory decoded than on the wire, so the limit
-// must charge for them: 50 frames of 1000 one-byte headers are about 500 KB
-// on the wire, under the 1 MiB limit, but hold several times that.
+// must charge for them: 200 frames of MaxHeaders one-byte headers are about
+// 120 KB on the wire, far under the 1 MiB limit, but hold more than that.
 func TestCliStreamBufferCountsTinyHeaders(t *testing.T) {
 	c := cliNewConn(t, func(d *ServiceDispatcher) {
 		d.RegisterMethod("silent", cliSilentStream)
@@ -630,11 +630,11 @@ func TestCliStreamBufferCountsTinyHeaders(t *testing.T) {
 	call := cliFindCallOut(t, c.clientT)
 
 	hdr := map[string][]byte{}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < MaxHeaders; i++ {
 		hdr[strconv.Itoa(i)] = []byte{1}
 	}
 	wire := 0
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 200; i++ {
 		res := &pb.Call{Id: uint64(1<<40 + i), ParentId: call.ID(), Method: callbackMethod, Headers: hdr}
 		wire += proto.Size(res)
 		if err := c.serverT.send(context.Background(), res); err != nil {
