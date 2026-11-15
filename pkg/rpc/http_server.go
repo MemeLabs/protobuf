@@ -3,9 +3,11 @@ package rpc
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 
 	pb "github.com/MemeLabs/protobuf/pkg/apis/rpc"
 	"github.com/MemeLabs/protobuf/pkg/bytereader"
@@ -23,17 +25,31 @@ func NewHTTPServer(logger *zap.Logger) *HTTPServer {
 // HTTPServer ...
 type HTTPServer struct {
 	*ServiceDispatcher
+
+	// MaxMessageBytes caps the size of a request message; larger requests
+	// are rejected with 413. Values <= 0 use the RWDialer default (512 KiB).
+	// Set it before the server starts handling requests.
+	MaxMessageBytes int
 }
 
 func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	maxMessageBytes := s.MaxMessageBytes
+	if maxMessageBytes <= 0 {
+		maxMessageBytes = defaultMaxMessageBytes
+	}
+
 	l, err := binary.ReadUvarint(bytereader.New(r.Body))
 	if err != nil {
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}
+	if l > uint64(maxMessageBytes) {
+		httpServeError(http.StatusRequestEntityTooLarge, ErrMessageTooLarge, w)
+		return
+	}
 
 	b := make([]byte, l)
-	if _, err := io.ReadAtLeast(r.Body, b, int(l)); err != nil {
+	if _, err := io.ReadFull(r.Body, b); err != nil {
 		httpServeError(http.StatusBadRequest, err, w)
 		return
 	}
@@ -45,13 +61,46 @@ func (s *HTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
-	send := func(_ context.Context, res *pb.Call) error {
-		return httpServeProto(res, w)
-	}
-	call := NewCallIn(ctx, req, noopParentCallAccessor{}, send)
+	defer cancel()
 
-	s.ServiceDispatcher.Dispatch(call, cancel)
-	<-ctx.Done()
+	// w must not be used after ServeHTTP returns: rw.close drops later writes.
+	rw := &httpResponseWriter{w: w}
+	defer rw.close()
+
+	done := make(chan struct{})
+	var doneOnce sync.Once
+	call := NewCallIn(ctx, req, noopParentCallAccessor{}, rw.send)
+	s.ServiceDispatcher.Dispatch(call, func() { doneOnce.Do(func() { close(done) }) })
+
+	select {
+	case <-done:
+	case <-r.Context().Done():
+	}
+}
+
+var errHTTPResponseClosed = errors.New("http response closed")
+
+// httpResponseWriter serializes a call's writes to w and rejects them after
+// close.
+type httpResponseWriter struct {
+	mu     sync.Mutex
+	w      http.ResponseWriter
+	closed bool
+}
+
+func (w *httpResponseWriter) send(_ context.Context, res *pb.Call) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return errHTTPResponseClosed
+	}
+	return httpServeProto(res, w.w)
+}
+
+func (w *httpResponseWriter) close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
 }
 
 func httpServeError(statusCode int, err error, w http.ResponseWriter) error {

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -72,7 +73,7 @@ func (h *ServiceDispatcher) RegisterMethod(name string, method interface{}) {
 		arg:               reflect.TypeOf(method).In(1).Elem(),
 		requestCount:      serverRequestCount.WithLabelValues(name),
 		requestDurationMs: serverRequestDurationMs.WithLabelValues(name),
-		errorCount:        serverRequestCount.WithLabelValues(name),
+		errorCount:        serverErrorCount.WithLabelValues(name),
 	}
 }
 
@@ -80,7 +81,10 @@ func (h *ServiceDispatcher) RegisterMethod(name string, method interface{}) {
 func (h *ServiceDispatcher) Dispatch(call *CallIn, done func()) {
 	switch call.Method() {
 	case cancelMethod:
+		// CANCEL gets no response, but done must still release its CallIn
 		h.cancel(call)
+		call.Cancel()
+		done()
 	default:
 		go h.call(call, done)
 	}
@@ -93,21 +97,27 @@ func (h *ServiceDispatcher) cancel(call *CallIn) {
 }
 
 func (h *ServiceDispatcher) call(call *CallIn, done func()) {
+	// done runs after every response, a panic's too; HTTPServer drops later writes
+	defer func() {
+		call.Cancel()
+		done()
+	}()
+
 	method, ok := h.methods[call.Method()]
 	if !ok {
 		call.returnError(fmt.Errorf("method not found: %s", call.Method()))
-		done()
 		return
 	}
 
 	method.requestCount.Inc()
 	defer func(start time.Time) {
-		done()
-
 		if err := recoverError(recover()); err != nil {
-			method.errorCount.Inc()
 			h.logger.Error("call handler panicked", zap.Error(err), zap.Stack("stack"))
 			call.returnError(err)
+		}
+		// errors are counted only here, so each is counted once
+		if call.ResponseType() == ResponseTypeError {
+			method.errorCount.Inc()
 		}
 
 		duration := time.Since(start)
@@ -122,7 +132,6 @@ func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 
 	arg := reflect.New(method.arg)
 	if err := call.Argument(arg.Interface().(proto.Message)); err != nil {
-		serverErrorCount.WithLabelValues(call.Method()).Inc()
 		call.returnError(err)
 		return
 	}
@@ -131,16 +140,21 @@ func (h *ServiceDispatcher) call(call *CallIn, done func()) {
 	if len(rs) == 0 {
 		call.returnUndefined()
 	} else if err, ok := rs[len(rs)-1].Interface().(error); ok && err != nil {
-		method.errorCount.Inc()
 		call.returnError(err)
 	} else if r := rs[0]; r.Kind() == reflect.Chan {
-		call.returnStream(r.Interface())
+		if r.IsNil() {
+			call.returnError(errNilStream)
+		} else {
+			call.returnStream(r.Interface())
+		}
 	} else if r, ok := rs[0].Interface().(proto.Message); ok {
 		call.returnValue(r)
 	} else {
 		call.returnError(fmt.Errorf("unexpected response type %T", rs[0].Interface()))
 	}
 }
+
+var errNilStream = errors.New("handler returned a nil response stream")
 
 type serviceMethod struct {
 	fn                reflect.Value
