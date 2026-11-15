@@ -10,7 +10,7 @@ import {
   RPCCallUnaryRequest,
   RPCCallUnaryResponse,
 } from "../apis/strims/test/rpc";
-import { Message } from "../pb/message";
+import { Message, MessageClass } from "../pb/message";
 import Reader from "../pb/reader";
 import Writer from "../pb/writer";
 import Host, { HostOptions } from "./host";
@@ -217,6 +217,68 @@ const readAll = async <T>(s: AsyncIterable<T>) => {
   return { items, err: undefined as unknown };
 };
 
+// resolves once cond() holds
+const waitFor = async (cond: () => boolean, what: string, ms = 5000) => {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(2);
+  }
+};
+
+// get()'s value once it has stayed the same for ms
+const steady = async (get: () => number, ms = 50) => {
+  let v = get();
+  let since = Date.now();
+  const deadline = since + 5000;
+  while (Date.now() - since < ms) {
+    if (Date.now() > deadline) throw new Error(`never steady: ${v}`);
+    await sleep(2);
+    if (get() !== v) {
+      v = get();
+      since = Date.now();
+    }
+  }
+  return v;
+};
+
+// Runs fn with mocha's uncaught exception handler off, returning the uncaught
+// exceptions instead.
+const uncaught = async (fn: () => Promise<void>): Promise<unknown[]> => {
+  const caught: unknown[] = [];
+  const listeners = process.listeners("uncaughtException");
+  process.removeAllListeners("uncaughtException");
+  process.on("uncaughtException", (e: unknown) => caught.push(e));
+  try {
+    await fn();
+  } finally {
+    process.removeAllListeners("uncaughtException");
+    for (const l of listeners) process.on("uncaughtException", l);
+  }
+  return caught;
+};
+
+const blocked = (host: Host) => (host as unknown as { blocked: boolean }).blocked;
+
+// A w that writes nothing: writableLength, unless hidden, is the bytes
+// written plus extra.
+const fakeW = (hidden = false) => {
+  let written = 0;
+  const f = {
+    extra: 0,
+    written: () => written,
+    w: {
+      write: (b: Uint8Array) => {
+        written += b.byteLength;
+        return true;
+      },
+      once: () => f.w,
+    } as unknown as Writable,
+  };
+  if (!hidden) Object.defineProperty(f.w, "writableLength", { get: () => written + f.extra });
+  return f;
+};
+
 // Fails each test of the calling suite that leaves an unhandled rejection.
 const noUnhandledRejections = () => {
   let rejections: unknown[] = [];
@@ -374,6 +436,59 @@ for (const impl of impls) {
         assert.ok(v.bytesValue.buffer.byteLength < 100, `${v.bytesValue.buffer.byteLength}`);
         s.destroy();
       });
+
+      it("keeps none of a chunk's other bytes alive in an item that ends the chunk", async function () {
+        const { host, sendRaw } = connect(impl);
+        const s = testStream(host);
+        sendRaw(frame(sized(99, 100 * KiB)), frame(callback(1, DEFAULT, item(7))));
+        await sleep(5);
+        const v = (await s[Symbol.asyncIterator]().next()).value as TestMessage;
+        assert.deepStrictEqual(Array.from(v.bytesValue), [7]);
+        assert.ok(v.bytesValue.buffer.byteLength < 100, `${v.bytesValue.buffer.byteLength}`);
+        s.destroy();
+      });
+
+      it("decodes bytes fields as plain Uint8Arrays, wherever frames fall in chunks", async function () {
+        const { host, r, send, sendRaw } = connect(impl);
+        const s = testStream(host);
+        const f = (n: number) => frame(callback(1, DEFAULT, item(n)));
+        sendRaw(f(1));
+        sendRaw(f(2), f(3));
+        const split = f(4);
+        r.write(split.slice(0, 3));
+        r.write(split.slice(3));
+        sendRaw(frame(sized(1, 64 * KiB)));
+        send(callback(1, Call_Kind.CALL_KIND_CLOSE));
+        const { items } = await readAll<TestMessage>(s);
+        assert.strictEqual(items.length, 5);
+        assert.deepStrictEqual(
+          items.map((v) => Object.getPrototypeOf(v.bytesValue) === Uint8Array.prototype),
+          [true, true, true, true, true]
+        );
+      });
+
+      it("puts a frame from small chunks together in a buffer that doubles up to its length", async function () {
+        const { host, r } = connect(impl);
+        const p = host.expectOne(host.call("m", new TestMessage()), TestMessage);
+        const f = frame(sized(1, 100 * KiB));
+        const partial = () =>
+          (host as unknown as { partial?: Uint8Array }).partial?.byteLength ?? 0;
+        const sizes: number[] = [];
+        r.write(f.slice(0, 3));
+        await new Promise((resolve) => setImmediate(resolve));
+        sizes.push(partial());
+        for (let i = 3; i < f.byteLength; i += 512) {
+          r.write(f.slice(i, i + 512));
+          await new Promise((resolve) => setImmediate(resolve));
+          if (i + 512 < f.byteLength) {
+            const size = partial();
+            assert.ok(size > 0 && size <= Math.max(2 * (i + 512 - 3), 1024), `${size} at ${i}`);
+            sizes.push(size);
+          }
+        }
+        assert.ok(sizes[0] <= 1024, `${sizes[0]} after the prefix`);
+        assert.strictEqual((await p).bytesValue.byteLength > 99 * KiB, true);
+      });
     });
 
     describe("onClose", function () {
@@ -394,6 +509,33 @@ for (const impl of impls) {
         await assert.rejects(p, new Error("rpc: connection closed"));
         await sleep(5);
         assert.deepStrictEqual(closes, [new Error("reset")]);
+      });
+
+      it("rethrows its throw from a timer", async function () {
+        const r = new impl.PassThrough();
+        const host = new impl.Host(new impl.PassThrough(), r, undefined, {
+          onClose: () => {
+            throw new Error("boom");
+          },
+        });
+        const p = unary(host).catch((e: unknown) => e);
+        let threw: unknown;
+        const caught = await uncaught(async () => {
+          try {
+            r.write(
+              new Writer()
+                .uint32(600 * KiB)
+                .finish()
+                .slice()
+            );
+          } catch (e) {
+            threw = e;
+          }
+          await sleep(10);
+        });
+        assert.strictEqual(threw, undefined);
+        assert.deepStrictEqual(caught.map(String), ["Error: boom"]);
+        assert.deepStrictEqual(await p, new Error("rpc: message too large"));
       });
     });
 
@@ -493,6 +635,53 @@ for (const impl of impls) {
       testDefault({ maxStreamBufferBytes: 0 }, 16 * MiB, 512 * KiB);
       testDefault({ maxStreamBufferBytes: NaN }, 16 * MiB, 512 * KiB);
       testDefault({ maxMessageBytes: 5 * MiB }, 20 * MiB, 5 * MiB);
+      testDefault({ maxMessageBytes: -1 }, 16 * MiB, 512 * KiB);
+
+      it("decodes queued responses only as they come first", async function () {
+        let decoded = 0;
+        const Counting = {
+          decode: (b: Uint8Array) => {
+            decoded++;
+            return TestMessage.decode(b);
+          },
+        } as unknown as MessageClass<TestMessage>;
+        const { host, send } = connect(impl);
+        const s = host.expectMany(host.call("s", new TestMessage()), Counting);
+        for (let i = 1; i <= 10; i++) send(itemCall(i));
+        await sleep(5);
+        assert.strictEqual(decoded, 1);
+        const iter = s[Symbol.asyncIterator]();
+        assert.deepStrictEqual(bytesOf([(await iter.next()).value]), [[1]]);
+        assert.strictEqual(decoded, 2);
+        s.destroy();
+      });
+
+      const bad = (): ICall => ({ ...callback(1, DEFAULT), argument: new Uint8Array([0x08]) });
+
+      it("ends with a queued response's decode error, and cancels, once the ones before it are read", async function () {
+        const { host, out, send } = connect(impl);
+        const s = testStream(host);
+        send(itemCall(1), itemCall(2), bad(), itemCall(4));
+        await sleep(5);
+        assert.strictEqual(s.destroyed, false);
+        assert.deepStrictEqual(cancels(out), []);
+        const { items, err } = await readAll<TestMessage>(s);
+        assert.deepStrictEqual(bytesOf(items), [[1], [2]]);
+        assert.match((err as Error).message, /index out of range/);
+        await sleep(5);
+        assert.deepStrictEqual(cancels(out), [[1, "CALL_KIND_CANCEL"]]);
+      });
+
+      it("ends with a queued response's decode error, without a cancel, after CLOSE", async function () {
+        const { host, out, send } = connect(impl);
+        const s = testStream(host);
+        send(itemCall(1), bad(), callback(1, Call_Kind.CALL_KIND_CLOSE));
+        const { items, err } = await readAll<TestMessage>(s);
+        assert.deepStrictEqual(bytesOf(items), [[1]]);
+        assert.match((err as Error).message, /index out of range/);
+        await sleep(5);
+        assert.deepStrictEqual(cancels(out), []);
+      });
 
       it("is unbounded when negative", async function () {
         const { host, out, send } = connect(impl, { options: { maxStreamBufferBytes: -1 } });
@@ -777,6 +966,75 @@ for (const impl of impls) {
         assert.deepStrictEqual(responses(out, 1), [tooMany]);
       });
 
+      it("reads an over-limit frame's last id and method, as decoding does", async function () {
+        const t = testService(impl);
+        const { out, sendRaw, send } = connect(impl, { service: t.service });
+        send(request(1, "stream"));
+        await sleep(5);
+        const over = (w: Writer) => {
+          for (let i = 0; i < 65; i++) w.uint32(50).fork().uint32(10).string(`h${i}`).ldelim();
+          return prefixed(w.finish().slice());
+        };
+        // ids 2 then 3, methods CANCEL then sync: a request 3
+        sendRaw(
+          over(
+            new Writer()
+              .uint32(8)
+              .uint64(BigInt(2))
+              .uint32(8)
+              .uint64(BigInt(3))
+              .uint32(16)
+              .uint64(BigInt(1))
+              .uint32(26)
+              .string("CANCEL")
+              .uint32(26)
+              .string("sync")
+          )
+        );
+        await sleep(5);
+        assert.deepStrictEqual(responses(out, 3), [tooMany]);
+        assert.deepStrictEqual(responses(out, 2), []);
+        assert.strictEqual(t.streams[0].destroyed, false);
+        // methods sync then CANCEL: a cancel of 1
+        sendRaw(
+          over(
+            new Writer()
+              .uint32(8)
+              .uint64(BigInt(4))
+              .uint32(16)
+              .uint64(BigInt(1))
+              .uint32(26)
+              .string("sync")
+              .uint32(26)
+              .string("CANCEL")
+          )
+        );
+        await sleep(5);
+        assert.strictEqual(t.streams[0].destroyed, true);
+        assert.deepStrictEqual(responses(out, 4), []);
+      });
+
+      // a request "headers" whose header entry's key is a varint, so that a
+      // decoder reading it as a length skips into the Call's next field and
+      // takes 100 entries hidden in it as the Call's own
+      const entryHide = (): Uint8Array => {
+        const hidden = new Writer();
+        for (let i = 0; i < 100; i++) hidden.uint32(50).fork().uint32(10).string(`h${i}`).ldelim();
+        const hiddenBytes = hidden.finish().slice();
+        const argHeader = new Writer().uint32(42).uint32(hiddenBytes.length).finish().slice();
+        const entry = new Writer().uint32(8).uint32(argHeader.length).finish().slice();
+        const head = new Writer()
+          .uint32(8)
+          .uint64(BigInt(1))
+          .uint32(26)
+          .string("headers")
+          .uint32(50)
+          .bytes(entry)
+          .finish()
+          .slice();
+        return join([head, argHeader, hiddenBytes]);
+      };
+
       // a request "headers" whose envelope is malformed so as to hide 100
       // header entries from a scan that skips fields by their wire type
       const hidden = (): Uint8Array => {
@@ -824,6 +1082,7 @@ for (const impl of impls) {
         ["one whose header entry runs past its length", overrun],
         ["one with a field of the wrong wire type", wrongType],
         ["one that hides headers in a field of the wrong wire type", hidden],
+        ["one whose header entry's key isn't length-delimited", entryHide],
       ] as const) {
         it(`drops a malformed frame: ${name}`, async function () {
           const t = testService(impl);
@@ -845,32 +1104,26 @@ for (const impl of impls) {
         const t = testService(impl);
         const c = connect(impl, { service: t.service, hwm: 64, reading: false });
         c.send(request(1, "endless"));
-        await sleep(20);
-        const paused = t.produced();
+        await waitFor(() => blocked(c.host), "w to fill");
+        const paused = await steady(t.produced);
         assert.ok(paused < 100, `${paused}`);
-        await sleep(20);
-        assert.strictEqual(t.produced(), paused);
         c.read();
-        await sleep(20);
-        assert.ok(t.produced() > paused + 100, `${t.produced()}`);
+        await waitFor(() => t.produced() > paused + 100, "the stream to resume");
         c.send(cancel(1));
-        await sleep(5);
-        assert.strictEqual(t.streams[0].destroyed, true);
+        await waitFor(() => t.streams[0].destroyed, "the stream to be destroyed");
       });
 
       it("pauses a stream served while w is full", async function () {
         const t = testService(impl);
         const c = connect(impl, { service: t.service, hwm: 64, reading: false });
         c.send(request(1, "endless"));
-        await sleep(20);
+        await waitFor(() => blocked(c.host), "w to fill");
         c.send(request(2, "endless"));
-        await sleep(20);
-        const paused = t.produced();
-        await sleep(20);
-        assert.strictEqual(t.produced(), paused);
+        await waitFor(() => t.calls.length === 2, "the second stream");
+        const paused = await steady(t.produced);
+        assert.ok(paused < 100, `${paused}`);
         c.read();
-        await sleep(20);
-        assert.ok(responses(c.out, 2).length > 50, `${responses(c.out, 2).length}`);
+        await waitFor(() => responses(c.out, 2).length > 50, "the second stream's items");
         c.send(cancel(1), cancel(2));
       });
 
@@ -883,28 +1136,57 @@ for (const impl of impls) {
           options: { maxConcurrentCalls: 2 },
         });
         c.send(request(1, "endless"));
-        await sleep(20);
-        let backlog = c.backlog();
+        await waitFor(() => blocked(c.host), "w to fill");
+        let backlog = await steady(c.backlog);
         c.send(request(2, "sync"));
-        await sleep(5);
-        assert.ok(c.backlog() > backlog);
+        await waitFor(() => c.backlog() > backlog, "the reply to 2");
         backlog = c.backlog();
-        c.send(request(3, "hold"), request(4, "sync"), withHeaders65(request(5, "sync")));
+        c.send(
+          request(3, "hold"),
+          request(4, "sync"),
+          withHeaders65(request(5, "sync")),
+          request(6, "nope"),
+          { ...request(7, "sync"), argument: new Uint8Array([0x08]) }
+        );
+        await waitFor(() => t.calls.includes("hold"), "the call to hold");
         await sleep(5);
         assert.strictEqual(c.backlog(), backlog);
         c.send(cancel(1));
         c.read();
-        await sleep(10);
-        assert.deepStrictEqual(responses(c.out, 2), [["CALL_KIND_DEFAULT"]]);
-        assert.deepStrictEqual(responses(c.out, 4), []);
-        assert.deepStrictEqual(responses(c.out, 5), []);
-        // and refusals are sent once it has drained
-        c.send(request(6, "hold"), request(7, "sync"));
-        await sleep(5);
-        assert.deepStrictEqual(responses(c.out, 7), [
+        await waitFor(() => responses(c.out, 2).length > 0, "the reply to 2");
+        await waitFor(() => !blocked(c.host), "w to drain");
+        for (const id of [4, 5, 6, 7]) assert.deepStrictEqual(responses(c.out, id), []);
+        // refusals are sent once w has drained
+        c.send(request(8, "hold"), request(9, "sync"), request(10, "nope"));
+        await waitFor(() => responses(c.out, 10).length > 0, "the reply to 10");
+        assert.deepStrictEqual(responses(c.out, 9), [
           ["CALL_KIND_ERROR", "rpc: too many concurrent calls", 1003],
         ]);
         assert.deepStrictEqual(t.calls, ["endless", "sync", "hold", "hold"]);
+      });
+
+      it("drops not-implemented and undecodable-request errors while w is full", async function () {
+        const t = testService(impl);
+        const c = connect(impl, { service: t.service, hwm: 64, reading: false });
+        c.send(request(1, "endless"));
+        await waitFor(() => blocked(c.host), "w to fill");
+        const backlog = await steady(c.backlog);
+        c.send(request(2, "nope"), { ...request(3, "sync"), argument: new Uint8Array([0x08]) });
+        c.send(request(4, "hold"));
+        await waitFor(() => t.calls.includes("hold"), "the call to hold");
+        await sleep(5);
+        assert.strictEqual(c.backlog(), backlog);
+        c.send(cancel(1));
+        c.read();
+        await waitFor(() => !blocked(c.host), "w to drain");
+        c.send(request(5, "nope"), { ...request(6, "sync"), argument: new Uint8Array([0x08]) });
+        await waitFor(() => responses(c.out, 6).length > 0, "the reply to 6");
+        assert.deepStrictEqual(responses(c.out, 2), []);
+        assert.deepStrictEqual(responses(c.out, 3), []);
+        assert.deepStrictEqual(responses(c.out, 5), [
+          ["CALL_KIND_ERROR", "method not implemented: nope", 0],
+        ]);
+        assert.deepStrictEqual(responses(c.out, 6)[0][0], "CALL_KIND_ERROR");
       });
 
       it("keeps streams paused while w never drains, until the host closes", async function () {
@@ -914,14 +1196,11 @@ for (const impl of impls) {
         const closes: unknown[] = [];
         const host = new impl.Host(w, r, t.service, { onClose: (err) => closes.push(err) });
         r.write(frame(request(1, "endless")));
-        await sleep(20);
-        const paused = t.produced();
+        await waitFor(() => blocked(host), "w to fill");
+        const paused = await steady(t.produced);
         assert.ok(paused < 100, `${paused}`);
-        await sleep(20);
-        assert.strictEqual(t.produced(), paused);
         r.end();
-        await sleep(5);
-        assert.strictEqual(t.streams[0].destroyed, true);
+        await waitFor(() => t.streams[0].destroyed, "the stream to be destroyed");
         assert.strictEqual((host as unknown as { serving: Set<unknown> }).serving.size, 0);
         assert.deepStrictEqual(closes, [undefined]);
       });
@@ -938,9 +1217,230 @@ for (const impl of impls) {
         const r = new impl.PassThrough();
         new impl.Host(w, r, t.service);
         r.write(frame(request(1, "endless")));
-        await sleep(20);
-        assert.ok(writes > 100, `${writes}`);
+        await waitFor(() => writes > 100, "100 writes");
         r.end();
+      });
+    });
+
+    describe("write buffer", function () {
+      // a reply's frame, as the host's n-th call
+      const replyBytes = frame({
+        id: BigInt(1),
+        parentId: BigInt(1),
+        method: "CALLBACK",
+      }).byteLength;
+
+      it("closes the host when w holds more than maxWriteBufferBytes", async function () {
+        const t = testService(impl);
+        const f = fakeW();
+        const r = new impl.PassThrough();
+        const closes: unknown[] = [];
+        const host = new impl.Host(f.w, r, t.service, {
+          maxWriteBufferBytes: 1000,
+          onClose: (err) => closes.push(err),
+        });
+        const p = unary(host).catch((e: unknown) => e);
+        f.extra = 1000 - f.written() - 2 * replyBytes;
+        r.write(frame(request(1, "sync")));
+        r.write(frame(request(2, "sync")));
+        await sleep(5);
+        assert.deepStrictEqual(closes, []);
+        r.write(frame(request(3, "sync")));
+        await sleep(5);
+        assert.deepStrictEqual(closes, [new Error("rpc: peer not reading")]);
+        assert.deepStrictEqual(await p, new Error("rpc: peer not reading"));
+        const written = f.written();
+        r.write(frame(request(4, "sync")));
+        await sleep(5);
+        assert.strictEqual(f.written(), written);
+      });
+
+      it("closes the host when a w that's never read fills", async function () {
+        const t = testService(impl);
+        const w = new impl.PassThrough({ highWaterMark: KiB });
+        const r = new impl.PassThrough();
+        const closes: unknown[] = [];
+        new impl.Host(w, r, t.service, {
+          maxWriteBufferBytes: 4 * KiB,
+          onClose: (err) => closes.push(err),
+        });
+        const reqs: Uint8Array[] = [];
+        for (let i = 1; i <= 2000; i++) reqs.push(frame(request(i, "sync")));
+        r.write(join(reqs));
+        await waitFor(() => closes.length > 0, "the host to close");
+        assert.deepStrictEqual(closes, [new Error("rpc: peer not reading")]);
+        assert.ok(w.writableLength <= 4 * KiB + replyBytes, `${w.writableLength}`);
+      });
+
+      const testDefault = (options: HostOptions, max: number) => {
+        it(`defaults to ${max / MiB} MiB with ${JSON.stringify(options)}`, async function () {
+          const t = testService(impl);
+          const f = fakeW();
+          const r = new impl.PassThrough();
+          const closes: unknown[] = [];
+          new impl.Host(f.w, r, t.service, { ...options, onClose: (err) => closes.push(err) });
+          f.extra = max - f.written() - replyBytes;
+          r.write(frame(request(1, "sync")));
+          await sleep(5);
+          assert.deepStrictEqual(closes, []);
+          r.write(frame(request(2, "sync")));
+          await sleep(5);
+          assert.deepStrictEqual(closes, [new Error("rpc: peer not reading")]);
+        });
+      };
+      testDefault({}, 16 * MiB);
+      testDefault({ maxWriteBufferBytes: 0 }, 16 * MiB);
+      testDefault({ maxWriteBufferBytes: NaN }, 16 * MiB);
+      testDefault({ maxMessageBytes: 5 * MiB }, 20 * MiB);
+      testDefault({ maxMessageBytes: -1 }, 16 * MiB);
+
+      for (const [name, options, hidden] of [
+        ["when negative", { maxWriteBufferBytes: -1 }, false],
+        ["for a w without writableLength", {}, true],
+      ] as const) {
+        it(`has no limit ${name}`, async function () {
+          const t = testService(impl);
+          const f = fakeW(hidden);
+          const r = new impl.PassThrough();
+          const closes: unknown[] = [];
+          new impl.Host(f.w, r, t.service, { ...options, onClose: (err) => closes.push(err) });
+          f.extra = 1024 * MiB;
+          r.write(frame(request(1, "sync")));
+          await sleep(5);
+          assert.deepStrictEqual(closes, []);
+          assert.ok(f.written() > 0);
+        });
+      }
+    });
+
+    describe("dispatch", function () {
+      // a service whose "tick" records, for each call, the synchronous run of
+      // the event loop it came in
+      const tickService = () => {
+        const runs: number[] = [];
+        const log: string[] = [];
+        let run = 0;
+        let armed = false;
+        const service = new ServiceRegistry();
+        service.registerMethod(
+          "tick",
+          (req: RPCCallUnaryRequest) => {
+            if (!armed) {
+              armed = true;
+              queueMicrotask(() => {
+                armed = false;
+                run++;
+              });
+            }
+            runs.push(run);
+            log.push(String(req.id));
+            return new RPCCallUnaryResponse({ id: req.id });
+          },
+          RPCCallUnaryRequest
+        );
+        // the number of calls in each run
+        const perRun = () => {
+          const counts = new Map<number, number>();
+          for (const r of runs) counts.set(r, (counts.get(r) ?? 0) + 1);
+          return Array.from(counts.values());
+        };
+        return { service, log, perRun };
+      };
+
+      // requests to "tick", ids from to to-1+n, each padded to about pad bytes
+      const ticks = (from: number, n: number, pad = 0) => {
+        const frames: Uint8Array[] = [];
+        for (let i = from; i < from + n; i++) {
+          const arg = new Writer().uint32(8).uint64(BigInt(i));
+          if (pad) arg.uint32((15 << 3) | 2).bytes(new Uint8Array(pad));
+          frames.push(frame({ id: BigInt(i), method: "tick", argument: arg.finish().slice() }));
+        }
+        return join(frames);
+      };
+
+      it("dispatches 1024 frames a turn, in order, the rest from a timer", async function () {
+        const t = tickService();
+        const { r, out } = connect(impl, { service: t.service });
+        r.write(ticks(1, 5000));
+        await waitFor(() => t.log.length === 5000, "5000 calls");
+        const perRun = t.perRun();
+        assert.strictEqual(perRun[0], 1024);
+        assert.ok(
+          perRun.every((n) => n <= 1024),
+          `${perRun.join(",")}`
+        );
+        assert.deepStrictEqual(
+          t.log,
+          Array.from({ length: 5000 }, (_, i) => String(i + 1))
+        );
+        await waitFor(() => out.length === 5000, "5000 replies");
+        assert.deepStrictEqual(
+          out.map((c) => Number(c.parentId)),
+          Array.from({ length: 5000 }, (_, i) => i + 1)
+        );
+      });
+
+      it("takes data that comes while frames wait for the timer after them", async function () {
+        const t = tickService();
+        const { r } = connect(impl, { service: t.service });
+        r.write(ticks(1, 3000));
+        r.write(ticks(3001, 1000));
+        await waitFor(() => t.log.length === 4000, "4000 calls");
+        assert.strictEqual(t.perRun()[0], 1024);
+        assert.deepStrictEqual(
+          t.log,
+          Array.from({ length: 4000 }, (_, i) => String(i + 1))
+        );
+      });
+
+      it("dispatches at once while more than 1 MiB waits", async function () {
+        const t = tickService();
+        const { r } = connect(impl, { service: t.service });
+        const chunk = ticks(1, 10000, 200);
+        assert.ok(chunk.byteLength > 2 * MiB);
+        r.write(chunk);
+        await waitFor(() => t.log.length === 10000, "10000 calls");
+        const perRun = t.perRun();
+        assert.ok(perRun[0] > 1024, `${perRun.join(",")}`);
+      });
+
+      it("dispatches the frames read before closing", async function () {
+        const t = tickService();
+        const { host, r, closes } = connect(impl, { service: t.service });
+        const p = unary(host);
+        r.write(join([ticks(1, 3000), frame(callback(1, DEFAULT, new RPCCallUnaryResponse()))]));
+        r.end();
+        await p;
+        assert.strictEqual(t.log.length, 3000);
+        await waitFor(() => closes.length > 0, "the host to close");
+        assert.deepStrictEqual(closes, [undefined]);
+      });
+
+      it("answers nothing to empty frames, or to requests with id 0", async function () {
+        const { out, r, send } = connect(impl);
+        r.write(new Uint8Array(64 * KiB));
+        send({ method: "nope", argument: encodeArg(new RPCCallUnaryRequest()) });
+        send(request(7, "nope"));
+        await waitFor(() => responses(out, 7).length > 0, "the reply to 7");
+        assert.deepStrictEqual(
+          out.map((c) => Number(c.parentId)),
+          [7]
+        );
+      });
+
+      it("takes responses and cancels with id 0", async function () {
+        const t = testService(impl);
+        const { host, send } = connect(impl, { service: t.service });
+        const p = unary(host);
+        send({
+          ...callback(1, DEFAULT, new RPCCallUnaryResponse({ id: BigInt(5) })),
+          id: BigInt(0),
+        });
+        assert.strictEqual((await p).id, BigInt(5));
+        send(request(1, "stream"));
+        await waitFor(() => t.streams.length === 1, "the stream");
+        send({ ...cancel(1), id: BigInt(0) });
+        await waitFor(() => t.streams[0].destroyed, "the stream to be destroyed");
       });
     });
   });

@@ -44,12 +44,25 @@ const decodeCallError = (b: Uint8Array): unknown => {
 
 const DEFAULT_MAX_MESSAGE_BYTES = 512 * 1024;
 const MIN_DEFAULT_STREAM_BUFFER_BYTES = 16 * 1024 * 1024;
+const MIN_DEFAULT_WRITE_BUFFER_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_CALLS = 128;
 const DEFAULT_MAX_HEADERS = 64;
 const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
 // what a queued stream response is charged beyond its frame
 const RESPONSE_OVERHEAD = 256;
 const HEADER_OVERHEAD = 128;
+
+// a length prefix's most bytes
+const MAX_PREFIX_BYTES = 5;
+// a partial frame buffer's least size
+const MIN_PARTIAL_BYTES = 1024;
+// the frames dispatched before the rest wait for a timer, unless more than
+// MAX_INPUT_BACKLOG bytes are waiting
+const FRAMES_PER_TURN = 1024;
+const MAX_INPUT_BACKLOG = 1024 * 1024;
+
+const ZERO = BigInt(0);
+const EMPTY = new Uint8Array(0);
 
 // strims.rpc.errors.ErrorCode values
 const TOO_MANY_CONCURRENT_CALLS = 1003;
@@ -59,6 +72,7 @@ const connectionClosed = (): Error => new Error("rpc: connection closed");
 const messageTooLarge = (): Error => new Error("rpc: message too large");
 const malformedLength = (): Error => new Error("rpc: malformed message length");
 const tooManyHeaders = (): Error => new Error("rpc: too many headers");
+const peerNotReading = (): Error => new Error("rpc: peer not reading");
 const streamBufferFull = (): unknown =>
   new RPCError({ message: "rpc: stream response buffer full", code: OVERFLOW });
 
@@ -86,15 +100,12 @@ const toBytes = (data: ArrayBufferView | ArrayBuffer): Uint8Array => {
   return new Uint8Array(data);
 };
 
-const concat = (chunks: Uint8Array[], len: number): Uint8Array => {
-  const buf = new Uint8Array(len);
-  let pos = 0;
-  for (const chunk of chunks) {
-    buf.set(chunk, pos);
-    pos += chunk.byteLength;
-  }
-  return buf;
-};
+// frame as a plain Uint8Array, copied unless its buffer holds no more than
+// frame and a length prefix
+const own = (frame: Uint8Array): Uint8Array =>
+  frame.buffer.byteLength > frame.byteLength + MAX_PREFIX_BYTES
+    ? new Uint8Array(frame)
+    : new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength);
 
 // An option's limit: def for 0, NaN or undefined, and none (Infinity) if negative.
 const limit = (v: number | undefined, def: number): number => (!v ? def : v < 0 ? Infinity : v);
@@ -215,7 +226,17 @@ export interface HostOptions {
    * stream, and a CANCEL cancels its call.
    */
   maxHeaderBytes?: number;
-  /** Called once when the host closes, with the error that closed it, if any. */
+  /**
+   * The bytes w may hold unwritten, as w.writableLength reports them; default
+   * the larger of 16 MiB and 4 × maxMessageBytes. A write that leaves more
+   * closes the host with Error("rpc: peer not reading"). Not checked if w has
+   * no writableLength.
+   */
+  maxWriteBufferBytes?: number;
+  /**
+   * Called once when the host closes, with the error that closed it, if any.
+   * Its throw is rethrown from a timer.
+   */
   onClose?: (err?: Error) => void;
 }
 
@@ -256,8 +277,11 @@ interface ServedCall {
  * more is written. Half-close isn't supported.
  *
  * If w has once(), served streams are paused from a w.write() that returns
- * false until w emits drain, and requests refused for a limit meanwhile get no
- * reply.
+ * false until w emits drain, and requests refused meanwhile get no reply.
+ * Requests with id 0 get no reply.
+ *
+ * Frames are dispatched in order, up to 1024 per turn of the event loop while
+ * no more than 1 MiB of them is waiting.
  */
 export default class Host {
   private w: Writable;
@@ -271,16 +295,27 @@ export default class Host {
   private serving: Set<ServedCall>;
   private argWriter: Writer;
   private callWriter: Writer;
-  // the bytes read and not yet dispatched, their length, and the length the
-  // next frame needs (0 until its length prefix is in)
-  private chunks: Uint8Array[];
-  private buffered: number;
+  // the chunks read and not yet parsed, the offset of the first's next byte,
+  // and their bytes left
+  private input: Uint8Array[];
+  private inputPos: number;
+  private backlog: number;
+  // the length prefix being read: its value so far and its bytes
+  private prefixLen: number;
+  private prefixBytes: number;
+  // the frame being put together from chunks, its bytes in, and its length
+  private partial: Uint8Array | undefined;
+  private filled: number;
   private need: number;
   // whether frames are being dispatched, this host is writing (and how many
-  // writes deep), or a dispatch is queued for after the write
+  // writes deep), a dispatch is queued for after the write, or the rest of the
+  // frames read wait for a timer
   private reading: boolean;
   private writing: number;
   private deferred: boolean;
+  private resumeTimer: ReturnType<typeof setTimeout> | undefined;
+  // the close that waits for the frames read to be dispatched
+  private closing: (() => void) | undefined;
   private closed: boolean;
   // whether w has once(), and whether its drain is awaited
   private canDrain: boolean;
@@ -290,6 +325,7 @@ export default class Host {
   private maxConcurrentCalls: number;
   private maxHeaders: number;
   private maxHeaderBytes: number;
+  private maxWriteBufferBytes: number;
   private onClose: ((err?: Error) => void) | undefined;
 
   constructor(w: Writable, r: Readable, service?: ServiceRegistry, options: HostOptions = {}) {
@@ -301,26 +337,35 @@ export default class Host {
     this.serving = new Set<ServedCall>();
     this.argWriter = new Writer();
     this.callWriter = new Writer();
-    this.chunks = [];
-    this.buffered = 0;
+    this.input = [];
+    this.inputPos = 0;
+    this.backlog = 0;
+    this.prefixLen = 0;
+    this.prefixBytes = 0;
+    this.partial = undefined;
+    this.filled = 0;
     this.need = 0;
     this.reading = false;
     this.writing = 0;
     this.deferred = false;
+    this.resumeTimer = undefined;
+    this.closing = undefined;
     this.closed = false;
     this.canDrain = typeof (w as { once?: unknown }).once === "function";
     this.blocked = false;
     this.maxMessageBytes = limit(options.maxMessageBytes, DEFAULT_MAX_MESSAGE_BYTES);
+    const messageBytes = isFinite(this.maxMessageBytes) ? this.maxMessageBytes : 0;
     this.maxStreamBufferBytes = limit(
       options.maxStreamBufferBytes,
-      Math.max(
-        MIN_DEFAULT_STREAM_BUFFER_BYTES,
-        4 * (isFinite(this.maxMessageBytes) ? this.maxMessageBytes : 0)
-      )
+      Math.max(MIN_DEFAULT_STREAM_BUFFER_BYTES, 4 * messageBytes)
     );
     this.maxConcurrentCalls = limit(options.maxConcurrentCalls, DEFAULT_MAX_CONCURRENT_CALLS);
     this.maxHeaders = limit(options.maxHeaders, DEFAULT_MAX_HEADERS);
     this.maxHeaderBytes = limit(options.maxHeaderBytes, DEFAULT_MAX_HEADER_BYTES);
+    this.maxWriteBufferBytes = limit(
+      options.maxWriteBufferBytes,
+      Math.max(MIN_DEFAULT_WRITE_BUFFER_BYTES, 4 * messageBytes)
+    );
     this.onClose = options.onClose;
 
     r.on("data", (data: ArrayBufferView | ArrayBuffer) => this.handleData(data));
@@ -363,6 +408,12 @@ export default class Host {
     } finally {
       this.writing--;
     }
+    const { writableLength } = this.w as { writableLength?: unknown };
+    if (typeof writableLength === "number" && writableLength > this.maxWriteBufferBytes) {
+      const err = peerNotReading();
+      this.close(err, () => err);
+      return;
+    }
     if (ok === false && this.canDrain && !this.blocked) {
       this.blocked = true;
       this.w.once("drain", () => this.unblock());
@@ -382,9 +433,6 @@ export default class Host {
   // Resumes the served streams paused while w was full.
   private unblock() {
     this.blocked = false;
-    if (this.closed) {
-      return;
-    }
     for (const served of Array.from(this.serving)) {
       if (served.paused) {
         served.paused = false;
@@ -450,15 +498,18 @@ export default class Host {
   }
 
   public expectMany<T>(call: Call, Message: MessageClass<T>): GenericReadable<T> {
-    // Items not yet pushed, and how the stream ends once they are read: an
-    // error, or null for CLOSE. Items are pushed only on read (highWaterMark
-    // 0), so destroying the stream with the error drops none.
-    const queue: { v: T; cost: number }[] = [];
-    // the sum of the queued items' costs
+    // Responses not yet pushed, each with its charge, the first one decoded,
+    // and how the stream ends once they are read: an error, or null for CLOSE.
+    // Items are pushed only on read (highWaterMark 0), so destroying the
+    // stream with the error drops none.
+    const queue: { arg?: Uint8Array; v?: T; cost: number }[] = [];
+    // the sum of the queued responses' charges
     let queued = 0;
     let ending: { err: Error | null } | undefined;
     // whether the consumer has asked for an item it hasn't been given
     let wanted = false;
+    // whether the call's responses still come to this stream
+    let open = true;
 
     const flush = () => {
       if (!wanted || e.destroyed) {
@@ -469,6 +520,7 @@ export default class Host {
         const { v, cost } = queue.shift();
         queued -= cost;
         e.push(v);
+        decodeFirst();
       } else if (ending) {
         wanted = false;
         const { err } = ending;
@@ -523,14 +575,34 @@ export default class Host {
 
     // the server ended the stream, or the connection closed: nothing to cancel
     const finish = () => {
+      open = false;
       this.callbacks.delete(call.id);
       e.off("close", handleClose);
     };
 
+    // ends the stream with err, cancelling the call if it is open
     const abort = (err: Error) => {
-      finish();
-      this.cancel(call.id);
+      if (open) {
+        finish();
+        this.cancel(call.id);
+      }
       end(err);
+    };
+
+    // Decodes the first queued response. If it doesn't decode, it and the
+    // rest are dropped and the stream ends with the error.
+    const decodeFirst = () => {
+      const first = queue[0];
+      if (first?.arg) {
+        try {
+          first.v = Message.decode(first.arg);
+          first.arg = undefined;
+        } catch (err) {
+          queue.length = 0;
+          queued = 0;
+          abort(err as Error);
+        }
+      }
     };
 
     this.callbacks.set(call.id, {
@@ -544,15 +616,11 @@ export default class Host {
               abort(streamBufferFull() as Error);
               break;
             }
-            let v: T;
-            try {
-              v = Message.decode(res.argument);
-            } catch (err) {
-              abort(err as Error);
-              break;
-            }
-            queue.push({ v, cost });
+            queue.push({ arg: res.argument, cost });
             queued += cost;
+            if (queue.length === 1) {
+              decodeFirst();
+            }
             flush();
             break;
           }
@@ -593,11 +661,16 @@ export default class Host {
       return;
     }
     const chunk = toBytes(data);
-    this.chunks.push(chunk);
-    this.buffered += chunk.byteLength;
+    this.input.push(chunk);
+    this.backlog += chunk.byteLength;
 
-    // the running or deferred read() takes this data, keeping frames in order
-    if (this.reading || this.deferred) {
+    // the running, deferred or scheduled read() takes this data, keeping
+    // frames in order
+    if (
+      this.reading ||
+      this.deferred ||
+      (this.resumeTimer !== undefined && this.backlog <= MAX_INPUT_BACKLOG)
+    ) {
       return;
     }
     // a synchronous peer can reply mid-write, before expectOne: defer dispatch
@@ -612,81 +685,144 @@ export default class Host {
     this.read();
   }
 
-  // Dispatches each whole frame read.
+  // Dispatches the whole frames read, FRAMES_PER_TURN at a time while no more
+  // than MAX_INPUT_BACKLOG bytes wait, the rest from a timer.
   private read() {
+    if (this.resumeTimer !== undefined) {
+      clearTimeout(this.resumeTimer);
+      this.resumeTimer = undefined;
+    }
     this.reading = true;
     try {
-      for (let frame = this.nextFrame(); frame; frame = this.nextFrame()) {
+      for (let n = 1; ; n++) {
+        const frame = this.nextFrame();
+        if (!frame) {
+          break;
+        }
         this.handleFrame(frame);
+        if (
+          n % FRAMES_PER_TURN === 0 &&
+          this.backlog > 0 &&
+          this.backlog <= MAX_INPUT_BACKLOG &&
+          !this.closed
+        ) {
+          this.resumeTimer = setTimeout(() => {
+            this.resumeTimer = undefined;
+            this.read();
+          });
+          break;
+        }
       }
     } finally {
       this.reading = false;
+    }
+    if (this.closing && this.resumeTimer === undefined) {
+      const close = this.closing;
+      this.closing = undefined;
+      close();
     }
   }
 
   // Takes the next whole frame off the bytes read, or returns undefined until
   // it is all in. Each is a varint length, then a Call that long.
   private nextFrame(): Uint8Array | undefined {
-    if (this.closed || this.buffered === 0 || this.buffered < this.need) {
-      return undefined;
-    }
+    while (!this.closed && this.input.length > 0) {
+      const chunk = this.input[0];
+      let pos = this.inputPos;
+      if (pos === chunk.byteLength) {
+        this.input.shift();
+        this.inputPos = 0;
+        continue;
+      }
 
-    let buf = this.chunks[0];
-    if (this.chunks.length > 1) {
-      buf = concat(this.chunks, this.buffered);
-      this.chunks = [buf];
-    }
+      if (this.partial) {
+        const n = Math.min(this.need - this.filled, chunk.byteLength - pos);
+        this.grow(this.filled + n);
+        this.partial.set(chunk.subarray(pos, pos + n), this.filled);
+        this.filled += n;
+        this.inputPos = pos + n;
+        this.backlog -= n;
+        if (this.filled < this.need) {
+          continue;
+        }
+        const frame = this.partial;
+        this.partial = undefined;
+        return frame;
+      }
 
-    let len = 0;
-    let n = 0;
-    for (let b = 128; b > 127; n++) {
-      if (n === buf.byteLength) {
+      let b = 128;
+      while (b > 127 && pos < chunk.byteLength) {
+        if (this.prefixBytes === MAX_PREFIX_BYTES) {
+          // no length is this long: the stream is corrupt, and can't be resynced
+          const err = malformedLength();
+          this.close(err, () => err);
+          return undefined;
+        }
+        b = chunk[pos++];
+        this.prefixLen += (b & 127) * 2 ** (7 * this.prefixBytes++);
+      }
+      this.backlog -= pos - this.inputPos;
+      this.inputPos = pos;
+      if (b > 127) {
+        continue;
+      }
+      const len = this.prefixLen;
+      this.prefixLen = 0;
+      this.prefixBytes = 0;
+
+      if (len > this.maxMessageBytes) {
+        const err = messageTooLarge();
+        this.close(err, () => err);
         return undefined;
       }
-      if (n === 5) {
-        // no length is this long: the stream is corrupt, and can't be resynced
-        const err = malformedLength();
-        this.shutdown(err, () => err);
-        return undefined;
+      if (len === 0) {
+        return EMPTY;
       }
-      b = buf[n];
-      len += (b & 127) * 2 ** (7 * n);
+      if (chunk.byteLength - pos >= len) {
+        this.inputPos = pos + len;
+        this.backlog -= len;
+        return own(chunk.subarray(pos, pos + len));
+      }
+      this.partial = EMPTY;
+      this.filled = 0;
+      this.need = len;
     }
-
-    if (len > this.maxMessageBytes) {
-      const err = messageTooLarge();
-      this.shutdown(err, () => err);
-      return undefined;
-    }
-
-    const end = n + len;
-    if (end > buf.byteLength) {
-      this.need = end;
-      return undefined;
-    }
-
-    // a copy, unless buf holds no bytes past this frame
-    const frame =
-      buf.buffer.byteLength > end ? new Uint8Array(buf.subarray(n, end)) : buf.subarray(n, end);
-    const rest = buf.subarray(end);
-    this.chunks = rest.byteLength === 0 ? [] : [rest];
-    this.buffered = rest.byteLength;
-    this.need = 0;
-    return frame;
+    return undefined;
   }
 
-  // Dispatches frame. One over a header limit isn't decoded.
+  // Grows the partial frame to hold at least size bytes, doubling it, up to
+  // its length.
+  private grow(size: number) {
+    if (size > this.partial.byteLength) {
+      const buf = new Uint8Array(
+        Math.min(this.need, Math.max(size, 2 * this.partial.byteLength, MIN_PARTIAL_BYTES))
+      );
+      buf.set(this.partial.subarray(0, this.filled));
+      this.partial = buf;
+    }
+  }
+
+  // Dispatches frame. One over a header limit isn't decoded; a request with
+  // id 0, an empty frame among them, is dropped.
   private handleFrame(frame: Uint8Array) {
+    if (frame.byteLength === 0) {
+      return;
+    }
     let env: Envelope;
     let call: Call | undefined;
     let method: string;
     try {
       env = scanCall(frame);
-      if (env.headers <= this.maxHeaders && env.headerBytes <= this.maxHeaderBytes) {
+      const within = env.headers <= this.maxHeaders && env.headerBytes <= this.maxHeaderBytes;
+      if (!within || env.id === ZERO) {
+        method = methodOf(frame, env);
+        if (env.id === ZERO && method !== CALLBACK_METHOD && method !== CANCEL_METHOD) {
+          return;
+        }
+      }
+      if (within) {
         call = Call.decode(frame);
         method = call.method;
-      } else {
-        method = methodOf(frame, env);
       }
     } catch {
       // a frame that doesn't decode is dropped
@@ -745,18 +881,22 @@ export default class Host {
 
     const methods = this.service?.methods;
     if (!methods || !Object.prototype.hasOwnProperty.call(methods, call.method)) {
-      this.reply(
-        call.id,
-        new RPCError({ message: `method not implemented: ${call.method}` }),
-        Call_Kind.CALL_KIND_ERROR
-      );
+      this.refuse(call.id, new RPCError({ message: `method not implemented: ${call.method}` }));
       return;
     }
     const method = methods[call.method];
 
+    let arg: unknown;
+    try {
+      arg = method.reqType.decode(call.argument);
+    } catch (e) {
+      this.refuse(call.id, toCallError(e));
+      return;
+    }
+
     let res: unknown;
     try {
-      res = method.callback(method.reqType.decode(call.argument), call);
+      res = method.callback(arg, call);
     } catch (e) {
       res = toCallError(e);
     }
@@ -875,11 +1015,10 @@ export default class Host {
     }
   }
 
-  // Closes the host with err, the error that closed it, if any: dispatches
-  // the whole frames already read, then fails pending calls with callErr(),
-  // cancels served ones, stops writing and calls onClose.
-  private shutdown(err?: Error, callErr: () => Error = connectionClosed) {
-    if (this.closed) {
+  // Closes the host, as close does, once the whole frames already read are
+  // dispatched.
+  private shutdown(err?: Error) {
+    if (this.closed || this.closing) {
       return;
     }
     if (!this.reading) {
@@ -888,10 +1027,27 @@ export default class Host {
         return;
       }
     }
+    if (this.resumeTimer !== undefined) {
+      this.closing = () => this.close(err);
+      return;
+    }
+    this.close(err);
+  }
+
+  // Closes the host with err, the error that closed it, if any: fails pending
+  // calls with callErr(), cancels served ones, stops reading and writing, and
+  // calls onClose.
+  private close(err?: Error, callErr: () => Error = connectionClosed) {
+    if (this.closed) {
+      return;
+    }
     this.closed = true;
-    this.chunks = [];
-    this.buffered = 0;
-    this.need = 0;
+    this.closing = undefined;
+    clearTimeout(this.resumeTimer);
+    this.resumeTimer = undefined;
+    this.input = [];
+    this.backlog = 0;
+    this.partial = undefined;
 
     const pending = Array.from(this.callbacks.values());
     this.callbacks.clear();
@@ -903,6 +1059,12 @@ export default class Host {
       this.stopServing(served);
     }
 
-    this.onClose?.(err);
+    try {
+      this.onClose?.(err);
+    } catch (e) {
+      setTimeout(() => {
+        throw e;
+      });
+    }
   }
 }
